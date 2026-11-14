@@ -22,6 +22,13 @@ elif git apply --check --reverse "$HERE/nepenthes/runtime.patch" 2>/dev/null; th
 else
   echo "NEPENTHES runtime.patch does not apply after tandem.patch"; exit 1
 fi
+if git apply --check "$HERE/nepenthes/runtime-sink.patch" 2>/dev/null; then
+  git apply "$HERE/nepenthes/runtime-sink.patch"
+elif git apply --check --reverse "$HERE/nepenthes/runtime-sink.patch" 2>/dev/null; then
+  echo "NEPENTHES JSONL sink and worker probes are already applied"
+else
+  echo "NEPENTHES runtime-sink.patch does not apply after runtime.patch"; exit 1
+fi
 cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release "$@"
 cmake --build build -j --target llama-server
 echo "built: $(pwd)/build/bin/llama-server"
