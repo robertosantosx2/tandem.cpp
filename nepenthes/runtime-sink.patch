@@ -393,13 +393,13 @@ diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 +        nepenthes::emit(nepenthes::EventType::fallback, "cuda.pinned_host_alloc_fallback", size, 0, nepenthes::flag_host | nepenthes::flag_failed);
 @@ -2268,1 +2282,2 @@
  static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
-+    nepenthes::ScopedEvent nepenthes_kernel(nepenthes::EventType::kernel, ggml_op_name(dst->op), dst->op, ggml_nbytes(dst));
++    nepenthes::ScopedEvent nepenthes_kernel(nepenthes::EventType::kernel, ggml_op_name(dst->op), static_cast<std::uint64_t>(dst->op), ggml_nbytes(dst));
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
 @@ -3001,2 +3001,3 @@
      bool process_single_task(server_task && task, bool is_yielding) {
-+        nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", task.id, task.type, nepenthes::phase_instant, task.id);
++        nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", task.id, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, task.id);
          // while yielding, an encode / decode is running and only reading the server state is safe
 @@ -2403,2 +2404,3 @@
      void send_final_response(server_slot & slot) {
