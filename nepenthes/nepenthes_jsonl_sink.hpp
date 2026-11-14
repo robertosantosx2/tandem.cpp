@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <stdexcept>
 #include <thread>
@@ -23,7 +24,7 @@ class JsonlSink final {
     };
 
 public:
-    explicit JsonlSink(const std::string& path) : output_(path, std::ios::out | std::ios::app) {
+    explicit JsonlSink(const std::string& path, std::string run_id = "tandem-standalone") : output_(path, std::ios::out | std::ios::app), run_id_(std::move(run_id)) {
         for (std::size_t i = 0; i < capacity; ++i) {
             queue_[i].sequence.store(i, std::memory_order_relaxed);
         }
@@ -137,7 +138,7 @@ private:
         output_.flush();
     }
 
-    std::array<Cell, capacity> queue_{};
+    std::string run_id_;\n    std::atomic<std::uint64_t> next_event_id_{1};\n    std::array<Cell, capacity> queue_{};
     std::atomic<std::size_t> enqueue_{0};
     std::atomic<std::size_t> dequeue_{0};
     std::atomic<std::uint64_t> dropped_{0};
