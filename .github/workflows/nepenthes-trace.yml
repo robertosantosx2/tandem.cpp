@@ -1,18 +1,16 @@
 name: NEPENTHES trace hook
 
 on:
-  push:
-    paths:
-      - "nepenthes/**"
-      - "tandem.patch"
-      - "build.sh"
-      - ".github/workflows/nepenthes-trace.yml"
   pull_request:
     paths:
       - "nepenthes/**"
       - "tandem.patch"
       - "build.sh"
       - ".github/workflows/nepenthes-trace.yml"
+
+concurrency:
+  group: nepenthes-trace-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   trace-smoke:
