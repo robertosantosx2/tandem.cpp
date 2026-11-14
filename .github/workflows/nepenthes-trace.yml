@@ -29,7 +29,7 @@ jobs:
       - name: Verify runtime patches apply to pinned llama.cpp base
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
-          git -C /tmp/llama.cpp fetch --depth=1 origin f5222f25c
+          git -C /tmp/llama.cpp fetch --depth=1 origin f5222f25c18da062ab2b8a2dbbfbf4feae398566
           git -C /tmp/llama.cpp checkout -q FETCH_HEAD
           git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/tandem.patch"
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
