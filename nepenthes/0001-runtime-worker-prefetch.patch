@@ -2,7 +2,7 @@ diff --git a/nepenthes/nepenthes_trace.hpp b/nepenthes/nepenthes_trace.hpp
 new file mode 100644
 --- /dev/null
 +++ b/nepenthes/nepenthes_trace.hpp
-@@ -0,0 +0,92 @@
+@@ -0,0 +1,92 @@
 +#pragma once
 +#include <atomic>
 +#include <chrono>
@@ -99,7 +99,7 @@ diff --git a/nepenthes/nepenthes_jsonl_sink.hpp b/nepenthes/nepenthes_jsonl_sink
 new file mode 100644
 --- /dev/null
 +++ b/nepenthes/nepenthes_jsonl_sink.hpp
-@@ -0,0 +0,202 @@
+@@ -0,0 +1,202 @@
 +#pragma once
 +#include "nepenthes_trace.hpp"
 +
