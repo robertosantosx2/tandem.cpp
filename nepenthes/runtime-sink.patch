@@ -222,7 +222,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
          }
 +        if (nepenthes_sink) nepenthes_sink->close();
          log_stats();
-@@ -3596,9 +3603,18 @@
+@@ -3596,9 +3603,19 @@
      void worker_loop() {
          pin_self(0);
          for (;;) {
@@ -255,7 +255,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            const std::uint64_t pf_start = nepenthes::now_ns();
 +            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
 +                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
-@@ -3588,3 +3616,10 @@
+@@ -3588,3 +3616,11 @@
              }
              t_la_us += ggml_time_us() - t0;
 +            std::uint64_t pf_bytes = 0;
