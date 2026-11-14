@@ -180,7 +180,7 @@ private:
                     << ",\"bytes\":" << event.bytes << ",\"duration_ns\":" << event.duration_ns
                     << ",\"layer\":" << event.layer << ",\"expert\":" << event.expert
                     << ",\"worker_id\":" << event.worker_id
-                    << ",\"stream_id\":" << event.stream_id << ",\"flags\":" << event.flags << "}}\\n";
+                    << ",\"stream_id\":" << event.stream_id << ",\"flags\":" << event.flags << "}}\n";
             if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
         }
         output_.flush();
