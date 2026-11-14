@@ -239,7 +239,7 @@ def main() -> int:
     )
     replace_once(
         root, kv,
-        '                cells.rm(i);\n'
+        '                cells.rm(i);\n\n'
         '                if (new_head == cells.size()) {',
         '                cells.rm(i);\n'
         '                nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.cell_release_all", i, s, nepenthes::phase_instant);\n'
