@@ -274,7 +274,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            static_cast<std::uint64_t>(&l - layers.data()),
 +            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
      }
-@@ -3805,6 +3830,9 @@
+@@ -3805,5 +3830,8 @@
      void post_pf_out(layer & l) {
          memcpy(pf_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
