@@ -11,6 +11,7 @@
 #include <string>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace nepenthes {
 
@@ -123,18 +124,19 @@ private:
                 std::this_thread::sleep_for(std::chrono::microseconds(250));
                 continue;
             }
-            output_ << "{\"schema_version\":\"1.0\",\"source\":\"tandem.cpp\","
-                    << "\"event_kind\":\"" << name(event.kind) << "\","
-                    << "\"monotonic_ns\":" << event.monotonic_ns << ","
-                    << "\"request_id\":" << event.request_id << ","
-                    << "\"object_id\":" << event.object_id << ","
-                    << "\"bytes\":" << event.bytes << ","
-                    << "\"duration_ns\":" << event.duration_ns << ","
-                    << "\"layer\":" << event.layer << ","
-                    << "\"expert\":" << event.expert << ","
-                    << "\"stream_id\":" << event.stream_id << ","
-                    << "\"flags\":" << event.flags << "}\n";
-        }
+            const auto wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const auto event_id = next_event_id_.fetch_add(1, std::memory_order_relaxed);
+            output_ << "{\\"schema_version\\":\\"1.0\\",\\"run_id\\":\\"" << run_id_
+                    << "\\",\\"event_id\\":\\"tandem-" << event_id
+                    << "\\",\\"source\\":\\"tandem.cpp\\",\\"timestamp_unix_ns\\":" << wall_ns
+                    << ",\\"monotonic_ns\\":" << event.monotonic_ns
+                    << ",\\"request_id\\":\\"" << event.request_id
+                    << "\\",\\"event_kind\\":\\"" << name(event.kind)
+                    << "\\",\\"payload\\":{\\"object_id\\":" << event.object_id
+                    << ",\\"bytes\\":" << event.bytes << ",\\"duration_ns\\":" << event.duration_ns
+                    << ",\\"layer\\":" << event.layer << ",\\"expert\\":" << event.expert
+                    << ",\\"stream_id\\":" << event.stream_id << ",\\"flags\\":" << event.flags << "}}\\n";
         output_.flush();
     }
 
