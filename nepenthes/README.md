@@ -37,7 +37,7 @@ is counted. The process-lifetime sink closes its writer during shutdown.
 | KV cache | Allocation, teardown, clear, ubatch update and cell reuse |
 | CPU workers | Idle wait, compute span, job completion, CPU and prefill output publication |
 | Prefetch | Lookahead enqueue begin/end, estimated bytes, and backend-event wait |
-| CUDA memory | Device allocation, pool return/release, buffer free, pinned-host allocation/free |
+| Memory allocation/free | Generic backend CPU/GPU buffer alloc/free and OOM, plus CUDA device alloc, pool return/release and pinned-host allocation/free |
 | OOM/fallback | Device allocation OOM, buffer allocation OOM, pinned-host-to-CPU fallback |
 | Transfers | H2D/D2H, 2D H2D/D2H and D2D/peer callsite spans |
 | CUDA operation dispatch | Per-\`ggml_op\` dispatch span and op identity |
