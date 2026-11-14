@@ -1,0 +1,420 @@
+diff --git a/nepenthes/nepenthes_trace.hpp b/nepenthes/nepenthes_trace.hpp
+new file mode 100644
+--- /dev/null
++++ b/nepenthes/nepenthes_trace.hpp
+@@ -0,0 +1,92 @@
++#pragma once
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <thread>
++
++namespace nepenthes {
++enum class EventKind : std::uint16_t {
++    request_start, request_end, model_load, model_unload, routing,
++    cache_hit, cache_miss, eviction, prefetch, kv_cache, allocation,
++    free, transfer, kernel, sync, stall, oom, fallback, error,
++    worker_wait, worker_start, worker_compute, worker_publish, worker_done,
++    prefetch_start, prefetch_end
++};
++constexpr std::uint32_t phase_begin = 1u << 0;
++constexpr std::uint32_t phase_end = 1u << 1;
++struct Event {
++    EventKind kind{EventKind::error};
++    std::uint64_t monotonic_ns{0}, request_id{0}, object_id{0}, bytes{0}, duration_ns{0}, worker_id{0};
++    std::uint32_t layer{0}, expert{0}, stream_id{0}, flags{0};
++};
++using Sink = void (*)(const Event&, void*) noexcept;
++
++inline std::uint64_t monotonic_now_ns() noexcept {
++    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++
++// Install/disable are lifecycle operations, not hot-path operations. disable()
++// waits until emitters that already entered the callback have left it.
++class Trace final {
++public:
++    Trace() = delete;
++
++    static void install(Sink sink, void* context = nullptr) noexcept {
++        context_.store(context, std::memory_order_relaxed);
++        sink_.store(sink, std::memory_order_release);
++    }
++
++    static void disable() noexcept {
++        sink_.store(nullptr, std::memory_order_release);
++        while (in_flight_.load(std::memory_order_acquire) != 0) {
++            std::this_thread::yield();
++        }
++        context_.store(nullptr, std::memory_order_relaxed);
++    }
++
++    static bool enabled() noexcept {
++        return sink_.load(std::memory_order_acquire) != nullptr;
++    }
++
++    static void emit(Event event) noexcept {
++        const Sink sink = sink_.load(std::memory_order_acquire);
++        if (!sink) return;
++
++        in_flight_.fetch_add(1, std::memory_order_acq_rel);
++        // Pair with disable(): an emitter that raced with shutdown must not
++        // enter a callback after disable() has observed a quiescent state.
++        if (sink_.load(std::memory_order_acquire) != sink) {
++            in_flight_.fetch_sub(1, std::memory_order_release);
++            return;
++        }
++
++        if (!event.monotonic_ns) event.monotonic_ns = monotonic_now_ns();
++        sink(event, context_.load(std::memory_order_relaxed));
++        in_flight_.fetch_sub(1, std::memory_order_release);
++    }
++
++private:
++    inline static std::atomic<Sink> sink_{nullptr};
++    inline static std::atomic<void*> context_{nullptr};
++    inline static std::atomic<std::uint32_t> in_flight_{0};
++};
++
++class ScopedEvent final {
++public:
++    explicit ScopedEvent(Event event) noexcept : event_(event), started_(monotonic_now_ns()) {}
++    ScopedEvent(const ScopedEvent&) = delete;
++    ScopedEvent& operator=(const ScopedEvent&) = delete;
++
++    ~ScopedEvent() noexcept {
++        event_.monotonic_ns = started_;
++        const auto end = monotonic_now_ns();
++        event_.duration_ns = end >= started_ ? end - started_ : 0;
++        Trace::emit(event_);
++    }
++
++private:
++    Event event_;
++    std::uint64_t started_;
++};
++} // namespace nepenthes
+diff --git a/nepenthes/nepenthes_jsonl_sink.hpp b/nepenthes/nepenthes_jsonl_sink.hpp
+new file mode 100644
+--- /dev/null
++++ b/nepenthes/nepenthes_jsonl_sink.hpp
+@@ -0,0 +1,202 @@
++#pragma once
++#include "nepenthes_trace.hpp"
++
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++#include <fstream>
++#include <stdexcept>
++#include <string>
++#include <thread>
++#include <utility>
++
++namespace nepenthes {
++class JsonlSink final {
++    static constexpr std::size_t capacity = 8192; // power of two
++    struct Cell {
++        std::atomic<std::size_t> sequence{0};
++        Event event{};
++    };
++
++public:
++    explicit JsonlSink(const std::string& path, std::string run_id = "tandem-standalone")
++        : output_(path, std::ios::out | std::ios::app),
++          run_id_json_(escape_json(run_id)) {
++        for (std::size_t i = 0; i < capacity; ++i) {
++            queue_[i].sequence.store(i, std::memory_order_relaxed);
++        }
++        if (!output_) {
++            throw std::runtime_error("cannot open NEPENTHES JSONL sink: " + path);
++        }
++        running_.store(true, std::memory_order_release);
++        writer_ = std::thread([this] { drain(); });
++        Trace::install(&JsonlSink::callback, this);
++    }
++
++    JsonlSink(const JsonlSink&) = delete;
++    JsonlSink& operator=(const JsonlSink&) = delete;
++
++    ~JsonlSink() { close(); }
++
++    // Safe to call more than once. Trace::disable waits for callbacks already
++    // inside push(), so the queue and this object remain alive until quiescent.
++    void close() noexcept {
++        bool expected = false;
++        if (!closed_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
++            return;
++        }
++        Trace::disable();
++        running_.store(false, std::memory_order_release);
++        if (writer_.joinable()) writer_.join();
++        output_.flush();
++        if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    std::uint64_t dropped() const noexcept {
++        return dropped_.load(std::memory_order_relaxed);
++    }
++
++    std::uint64_t write_errors() const noexcept {
++        return write_errors_.load(std::memory_order_relaxed);
++    }
++
++private:
++    static std::string escape_json(const std::string& value) {
++        static constexpr char hex[] = "0123456789abcdef";
++        std::string out;
++        out.reserve(value.size());
++        for (const unsigned char ch : value) {
++            switch (ch) {
++                case '"': out += "\\\""; break;
++                case '\\': out += "\\\\"; break;
++                case '\b': out += "\\b"; break;
++                case '\f': out += "\\f"; break;
++                case '\n': out += "\\n"; break;
++                case '\r': out += "\\r"; break;
++                case '\t': out += "\\t"; break;
++                default:
++                    if (ch < 0x20) {
++                        out += "\\u00";
++                        out += hex[(ch >> 4) & 0x0f];
++                        out += hex[ch & 0x0f];
++                    } else {
++                        out += static_cast<char>(ch);
++                    }
++            }
++        }
++        return out;
++    }
++
++    static void callback(const Event& event, void* opaque) noexcept {
++        static_cast<JsonlSink*>(opaque)->push(event);
++    }
++
++    void push(const Event& event) noexcept {
++        std::size_t pos = enqueue_.load(std::memory_order_relaxed);
++        for (;;) {
++            Cell& cell = queue_[pos & (capacity - 1)];
++            const std::size_t seq = cell.sequence.load(std::memory_order_acquire);
++            const auto diff = static_cast<std::intptr_t>(seq) - static_cast<std::intptr_t>(pos);
++            if (diff == 0) {
++                if (enqueue_.compare_exchange_weak(pos, pos + 1, std::memory_order_relaxed)) {
++                    cell.event = event;
++                    cell.sequence.store(pos + 1, std::memory_order_release);
++                    return;
++                }
++            } else if (diff < 0) {
++                dropped_.fetch_add(1, std::memory_order_relaxed);
++                return;
++            } else {
++                pos = enqueue_.load(std::memory_order_relaxed);
++            }
++        }
++    }
++
++    bool pop(Event& event) noexcept {
++        const std::size_t pos = dequeue_.load(std::memory_order_relaxed);
++        Cell& cell = queue_[pos & (capacity - 1)];
++        const std::size_t seq = cell.sequence.load(std::memory_order_acquire);
++        const auto diff = static_cast<std::intptr_t>(seq) - static_cast<std::intptr_t>(pos + 1);
++        if (diff != 0) return false;
++        dequeue_.store(pos + 1, std::memory_order_relaxed);
++        event = cell.event;
++        cell.sequence.store(pos + capacity, std::memory_order_release);
++        return true;
++    }
++
++    static const char* name(EventKind kind) noexcept {
++        switch (kind) {
++            case EventKind::request_start: return "request_start";
++            case EventKind::request_end: return "request_end";
++            case EventKind::model_load: return "model_load";
++            case EventKind::model_unload: return "model_unload";
++            case EventKind::routing: return "routing";
++            case EventKind::cache_hit: return "cache_hit";
++            case EventKind::cache_miss: return "cache_miss";
++            case EventKind::eviction: return "eviction";
++            case EventKind::prefetch: return "prefetch";
++            case EventKind::kv_cache: return "kv_cache";
++            case EventKind::allocation: return "allocation";
++            case EventKind::free: return "free";
++            case EventKind::transfer: return "transfer";
++            case EventKind::kernel: return "kernel";
++            case EventKind::sync: return "sync";
++            case EventKind::stall: return "stall";
++            case EventKind::oom: return "oom";
++            case EventKind::fallback: return "fallback";
++            case EventKind::error: return "error";
++            case EventKind::worker_wait: return "worker_wait";
++            case EventKind::worker_start: return "worker_start";
++            case EventKind::worker_compute: return "worker_compute";
++            case EventKind::worker_publish: return "worker_publish";
++            case EventKind::worker_done: return "worker_done";
++            case EventKind::prefetch_start: return "prefetch_start";
++            case EventKind::prefetch_end: return "prefetch_end";
++        }
++        return "error";
++    }
++
++    void drain() noexcept {
++        Event event{};
++        while (running_.load(std::memory_order_acquire) ||
++               dequeue_.load(std::memory_order_relaxed) != enqueue_.load(std::memory_order_relaxed)) {
++            if (!pop(event)) {
++                std::this_thread::sleep_for(std::chrono::microseconds(250));
++                continue;
++            }
++
++            const auto wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++                std::chrono::system_clock::now().time_since_epoch()).count();
++            const auto id = next_event_id_.fetch_add(1, std::memory_order_relaxed);
++            output_ << "{\"schema_version\":\"1.0\",\"run_id\":\"" << run_id_json_
++                    << "\",\"event_id\":\"tandem-" << id
++                    << "\",\"source\":\"tandem.cpp\",\"timestamp_unix_ns\":" << wall_ns
++                    << ",\"monotonic_ns\":" << event.monotonic_ns
++                    << ",\"request_id\":\"" << event.request_id
++                    << "\",\"event_kind\":\"" << name(event.kind)
++                    << "\",\"payload\":{\"object_id\":" << event.object_id
++                    << ",\"bytes\":" << event.bytes << ",\"duration_ns\":" << event.duration_ns
++                    << ",\"layer\":" << event.layer << ",\"expert\":" << event.expert
++                    << ",\"worker_id\":" << event.worker_id
++                    << ",\"stream_id\":" << event.stream_id << ",\"flags\":" << event.flags << "}}\\n";
++            if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
++        }
++        output_.flush();
++        if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    std::string run_id_json_;
++    std::atomic<std::uint64_t> next_event_id_{1};
++    std::array<Cell, capacity> queue_{};
++    std::atomic<std::size_t> enqueue_{0};
++    std::atomic<std::size_t> dequeue_{0};
++    std::atomic<std::uint64_t> dropped_{0};
++    std::atomic<std::uint64_t> write_errors_{0};
++    std::atomic<bool> running_{false};
++    std::atomic<bool> closed_{false};
++    std::ofstream output_;
++    std::thread writer_;
++};
++} // namespace nepenthes
+diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
+--- a/src/llama-moe-cache.cpp
++++ b/src/llama-moe-cache.cpp
+@@ -1,1 +1,2 @@
+ #include "llama-moe-cache.h"
++#include "../nepenthes/nepenthes_jsonl_sink.hpp"
+@@ -2047,2 +2048,3 @@
+     std::thread worker;
++    std::unique_ptr<nepenthes::JsonlSink> trace_sink;
+     std::atomic<int32_t> job_layer{-1};  // layer to compute, -1 idle, -2 exit
+@@ -2525,1 +2527,5 @@
+             n_expert_used(model.hparams.n_expert_used_max()), layers(model.layers.size()) {
++        if (const char * path = getenv("NEPENTHES_TRACE_JSONL"); path && *path) {
++            const char * run = getenv("NEPENTHES_RUN_ID");
++            trace_sink = std::make_unique<nepenthes::JsonlSink>(path, run ? run : "tandem-moe");
++        }
+@@ -3397,4 +3403,5 @@
+         for (auto & h : helpers) {
+             h.join();
+         }
++        if (trace_sink) trace_sink->close();
+         log_stats();
+@@ -3596,14 +3603,31 @@
+     void worker_loop() {
+         pin_self(0);
++        const std::uint64_t worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+         for (;;) {
+             int32_t il;
++            const std::uint64_t wait_started = nepenthes::monotonic_now_ns();
+             idle_wait([&] { return (il = job_layer.load(std::memory_order_acquire)) != -1; });
++            const std::uint64_t wait_ended = nepenthes::monotonic_now_ns();
++            nepenthes::Event wait_event{};
++            wait_event.kind = nepenthes::EventKind::worker_wait;
++            wait_event.layer = il >= 0 ? static_cast<std::uint32_t>(il) : 0;
++            wait_event.worker_id = worker_id;
++            wait_event.monotonic_ns = wait_started;
++            wait_event.duration_ns = wait_ended >= wait_started ? wait_ended - wait_started : 0;
++            nepenthes::Trace::emit(wait_event);
+             if (il == -2) {
+                 return;
+             }
+-            compute_cpu(layers[il]);
++            nepenthes::Event start_event{};
++            start_event.kind = nepenthes::EventKind::worker_start;
++            start_event.layer = static_cast<std::uint32_t>(il);
++            start_event.worker_id = worker_id;
++            nepenthes::Trace::emit(start_event);
++            {
++                nepenthes::Event compute_event{};
++                compute_event.kind = nepenthes::EventKind::worker_compute;
++                compute_event.layer = static_cast<std::uint32_t>(il);
++                compute_event.worker_id = worker_id;
++                nepenthes::ScopedEvent compute_scope(compute_event);
++                compute_cpu(layers[il]);
++            }
+@@ -3610,3 +3634,9 @@
+             job_layer.store(-1, std::memory_order_relaxed);
+             job_done.store(true, std::memory_order_release);
++            nepenthes::Event done_event{};
++            done_event.kind = nepenthes::EventKind::worker_done;
++            done_event.layer = static_cast<std::uint32_t>(il);
++            done_event.worker_id = worker_id;
++            done_event.bytes = layers[il].out.size() * sizeof(float);
++            nepenthes::Trace::emit(done_event);
+@@ -3517,4 +3547,9 @@
+             if (tl == -2) {
+                 return;
+             }
+             const int64_t t0 = ggml_time_us();
++            nepenthes::Event pf_start{};
++            pf_start.kind = nepenthes::EventKind::prefetch_start;
++            pf_start.layer = static_cast<std::uint32_t>(tl);
++            pf_start.flags = nepenthes::phase_begin;
++            nepenthes::Trace::emit(pf_start);
+@@ -3588,4 +3623,14 @@
+             }
+             t_la_us += ggml_time_us() - t0;
++            std::uint64_t pf_bytes = 0;
++            for (const auto & f : fills) {
++                for (const ggml_tensor * w : lt.experts) pf_bytes += w->nb[2];
++            }
++            nepenthes::Event pf_end{};
++            pf_end.kind = nepenthes::EventKind::prefetch_end;
++            pf_end.layer = static_cast<std::uint32_t>(tl);
++            pf_end.flags = nepenthes::phase_end;
++            pf_end.bytes = pf_bytes;
++            pf_end.duration_ns = static_cast<std::uint64_t>(std::max<int64_t>(0, ggml_time_us() - t0)) * 1000;
++            nepenthes::Trace::emit(pf_end);
+             la_job.store(-1, std::memory_order_relaxed);
+@@ -4108,8 +4153,14 @@
+     void post_cpu_out(layer & l) {
+         memcpy(l.cpu_out->data, l.out.data(), l.out.size()*sizeof(float));
+         std::atomic_thread_fence(std::memory_order_release);
+         volatile uint32_t * f = (volatile uint32_t *) l.flag->data;
+         f[0] = f[0] + 1;
++        nepenthes::Event event{};
++        event.kind = nepenthes::EventKind::worker_publish;
++        event.layer = static_cast<std::uint32_t>(&l - layers.data());
++        event.bytes = l.out.size() * sizeof(float);
++        event.worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
++        nepenthes::Trace::emit(event);
+     }
+@@ -4115,8 +4166,14 @@
+     void post_pf_out(layer & l) {
+         memcpy(pf_out->data, l.out.data(), l.out.size()*sizeof(float));
+         std::atomic_thread_fence(std::memory_order_release);
+         volatile uint32_t * f = (volatile uint32_t *) l.pf_flag->data;
+         f[0] = f[0] + 1;
++        nepenthes::Event event{};
++        event.kind = nepenthes::EventKind::worker_publish;
++        event.layer = static_cast<std::uint32_t>(&l - layers.data());
++        event.bytes = l.out.size() * sizeof(float);
++        event.worker_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
++        event.flags = nepenthes::phase_end;
++        nepenthes::Trace::emit(event);
+     }
