@@ -7,7 +7,10 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -193,5 +196,21 @@ private:
     std::ofstream output_;
     std::thread writer_;
 };
+
+
+inline JsonlSink * ensure_sink_from_env() noexcept {
+    static std::unique_ptr<JsonlSink> instance = []() -> std::unique_ptr<JsonlSink> {
+        const char * path = std::getenv("NEPENTHES_TRACE_JSONL");
+        if (path == nullptr || *path == '\0') return nullptr;
+        const char * run = std::getenv("NEPENTHES_RUN_ID");
+        try {
+            return std::make_unique<JsonlSink>(path, run ? run : "tandem");
+        } catch (const std::exception & e) {
+            std::fprintf(stderr, "NEPENTHES: cannot start JSONL sink: %s\n", e.what());
+            return nullptr;
+        }
+    }();
+    return instance.get();
+}
 
 } // namespace nepenthes
