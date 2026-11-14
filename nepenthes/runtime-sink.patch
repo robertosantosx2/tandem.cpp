@@ -203,9 +203,13 @@ new file mode 100644
 diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 --- a/src/llama-moe-cache.cpp
 +++ b/src/llama-moe-cache.cpp
-@@ -3,1 +3,2 @@
+@@ -1,5 +1,6 @@
+ #include "llama-moe-cache.h"
+ #include "llama-moe-iq.h"
  #include "nepenthes_trace.hpp"
 +#include "nepenthes_jsonl_sink.hpp"
+ 
+ #include "llama-impl.h"
 @@ -2047,2 +2048,3 @@
      std::thread worker;
 +    std::unique_ptr<nepenthes::JsonlSink> nepenthes_sink;
