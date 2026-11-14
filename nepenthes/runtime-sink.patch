@@ -281,10 +281,13 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                compute_cpu(layers[il]);
 +            }
              if (layers[il].pf_job) {
-@@ -3302,2 +3322,3 @@
+@@ -3302,5 +3322,6 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
+             if (pr) {
+                 run_preread();
+                 pr_running.store(false, std::memory_order_release);
 @@ -3798,5 +3819,6 @@
      void post_cpu_out(layer & l) {
          memcpy(l.cpu_out->data, l.out.data(), l.out.size()*sizeof(float));
@@ -328,9 +331,7 @@ diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
  
 +        nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.allocate", memory_size_k + memory_size_v, kv_size, nepenthes::phase_instant);
          LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u/%u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
-@@ -374,3 +376,7 @@
- }
- 
+@@ -376,1 +378,5 @@
 -void llama_kv_cache::clear(bool data) {
 +llama_kv_cache::~llama_kv_cache() {
 +    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.free", size_k_bytes() + size_v_bytes(), get_size(), nepenthes::phase_instant);
@@ -389,9 +390,10 @@ diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 +    nepenthes::emit(nepenthes::EventType::free_event, "cuda.buffer.free", buffer->size, ctx->device, nepenthes::flag_device);
      delete ctx;
  }
-@@ -902,4 +910,5 @@
+@@ -902,5 +910,6 @@
  static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
+ 
 +    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d", size, ctx->device);
      ggml_cuda_set_device(ctx->device);
      ggml_cuda_h2d((char *) tensor->data + offset, data, size, cudaStreamPerThread);
