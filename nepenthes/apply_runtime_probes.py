@@ -423,6 +423,28 @@ def main() -> int:
         "CUDA op dispatch",
     )
 
+    # Worker job publication and the GPU-side host wait for CPU output.
+    replace_all(
+        root, moe,
+        '            job_layer.store(il, std::memory_order_release);\n',
+        '            job_layer.store(il, std::memory_order_release);\n'
+        '            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
+        3, "CPU worker job enqueue",
+    )
+    replace_once(
+        root, moe,
+        '        const int64_t tw0 = ggml_time_us();\n'
+        '        wait_cpu();\n'
+        '        const int64_t tw1 = ggml_time_us();',
+        '        const int64_t tw0 = ggml_time_us();\n'
+        '        const std::uint64_t cpu_wait_start = nepenthes::now_ns();\n'
+        '        wait_cpu();\n'
+        '        const std::uint64_t cpu_wait_end = nepenthes::now_ns();\n'
+        '        nepenthes::emit(nepenthes::EventType::stall, "moe.gpu_consumer.wait_cpu", static_cast<std::uint64_t>(it->second), 0, nepenthes::phase_instant, 0, cpu_wait_end >= cpu_wait_start ? cpu_wait_end - cpu_wait_start : 0);\n'
+        '        const int64_t tw1 = ggml_time_us();',
+        "GPU consumer wait for CPU output",
+    )
+
     # Request lifecycle IDs at the server boundary; lower-level async worker events
     # deliberately keep request_id=0 until a safe cross-thread propagation path exists.
     server = "tools/server/server-context.cpp"
