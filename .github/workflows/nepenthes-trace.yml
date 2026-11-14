@@ -1,0 +1,24 @@
+name: NEPENTHES trace hook
+
+on:
+  push:
+    paths:
+      - "nepenthes/**"
+      - ".github/workflows/nepenthes-trace.yml"
+  pull_request:
+    paths:
+      - "nepenthes/**"
+      - ".github/workflows/nepenthes-trace.yml"
+
+jobs:
+  trace-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile C++17 trace smoke test
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+            -Inepenthes nepenthes/test_nepenthes_trace.cpp \
+            -o /tmp/nepenthes-trace-test
+      - name: Run trace smoke test
+        run: /tmp/nepenthes-trace-test
