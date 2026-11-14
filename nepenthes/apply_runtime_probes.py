@@ -193,7 +193,7 @@ def main() -> int:
     replace_once(
         root, kv, 'void llama_kv_cache::clear(bool data) {',
         'llama_kv_cache::~llama_kv_cache() {\n'
-        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.free", size_k_bytes() + size_v_bytes(), kv_size, nepenthes::phase_instant);\n'
+        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.free", size_k_bytes() + size_v_bytes(), get_size(), nepenthes::phase_instant);\n'
         '}\n\n'
         'void llama_kv_cache::clear(bool data) {',
         "KV teardown",
@@ -201,7 +201,7 @@ def main() -> int:
     replace_once(
         root, kv, 'void llama_kv_cache::clear(bool data) {',
         'void llama_kv_cache::clear(bool data) {\n'
-        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.clear", data ? 1 : 0, kv_size, nepenthes::phase_instant);',
+        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.clear", data ? 1 : 0, get_size(), nepenthes::phase_instant);',
         "KV clear",
     )
     replace_once(
