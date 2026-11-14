@@ -35,3 +35,8 @@ jobs:
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
           git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+            -I/tmp/llama.cpp/src -I"$GITHUB_WORKSPACE/nepenthes" \
+            "$GITHUB_WORKSPACE/nepenthes/test_nepenthes_trace.cpp" \
+            -o /tmp/nepenthes-runtime-trace-test
+          /tmp/nepenthes-runtime-trace-test
