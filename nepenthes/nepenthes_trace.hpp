@@ -8,13 +8,15 @@ namespace nepenthes {
 enum class EventKind : std::uint16_t {
     request_start, request_end, model_load, model_unload, routing,
     cache_hit, cache_miss, eviction, prefetch, kv_cache, allocation,
-    free, transfer, kernel, sync, stall, oom, fallback, error
+    free, transfer, kernel, sync, stall, oom, fallback, error,
+    worker_wait, worker_start, worker_compute, worker_publish, worker_done,
+    prefetch_start, prefetch_end
 };
 constexpr std::uint32_t phase_begin = 1u << 0;
 constexpr std::uint32_t phase_end = 1u << 1;
 struct Event {
     EventKind kind{EventKind::error};
-    std::uint64_t monotonic_ns{0}, request_id{0}, object_id{0}, bytes{0}, duration_ns{0};
+    std::uint64_t monotonic_ns{0}, request_id{0}, object_id{0}, bytes{0}, duration_ns{0}, worker_id{0};
     std::uint32_t layer{0}, expert{0}, stream_id{0}, flags{0};
 };
 using Sink = void (*)(const Event&, void*) noexcept;
