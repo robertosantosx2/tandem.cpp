@@ -2,7 +2,7 @@ diff --git a/src/nepenthes_jsonl_sink.hpp b/src/nepenthes_jsonl_sink.hpp
 new file mode 100644
 --- /dev/null
 +++ b/src/nepenthes_jsonl_sink.hpp
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,216 @@
 +#pragma once
 +
 +#include "nepenthes_trace.hpp"
@@ -12,7 +12,10 @@ new file mode 100644
 +#include <chrono>
 +#include <cstddef>
 +#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
 +#include <fstream>
++#include <memory>
 +#include <stdexcept>
 +#include <string>
 +#include <thread>
@@ -31,8 +34,8 @@ new file mode 100644
 +
 +public:
 +    explicit JsonlSink(const std::string & path, std::string run_id = "tandem")
-+        : output_(path, std::ios::out | std::ios::app),
-+          run_id_json_(escape_json(run_id)) {
++        : run_id_json_(escape_json(run_id)),
++          output_(path, std::ios::out | std::ios::app) {
 +        for (std::size_t i = 0; i < capacity; ++i) {
 +            queue_[i].sequence.store(i, std::memory_order_relaxed);
 +        }
@@ -199,6 +202,22 @@ new file mode 100644
 +    std::thread writer_;
 +};
 +
++
++inline JsonlSink * ensure_sink_from_env() noexcept {
++    static std::unique_ptr<JsonlSink> instance = []() -> std::unique_ptr<JsonlSink> {
++        const char * path = std::getenv("NEPENTHES_TRACE_JSONL");
++        if (path == nullptr || *path == '\0') return nullptr;
++        const char * run = std::getenv("NEPENTHES_RUN_ID");
++        try {
++            return std::make_unique<JsonlSink>(path, run ? run : "tandem");
++        } catch (const std::exception & e) {
++            std::fprintf(stderr, "NEPENTHES: cannot start JSONL sink: %s\n", e.what());
++            return nullptr;
++        }
++    }();
++    return instance.get();
++}
++
 +} // namespace nepenthes
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 --- a/src/llama-context.cpp
@@ -219,12 +238,13 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 --- a/src/llama-moe-cache.cpp
 +++ b/src/llama-moe-cache.cpp
-@@ -3211,1 +3211,4 @@
+@@ -3211,2 +3211,5 @@
              const int64_t t0 = ggml_time_us();
 +            const std::uint64_t pf_start = nepenthes::now_ns();
 +            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
 +                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
-@@ -3276,1 +3279,9 @@
+             const layer & lt = layers[tl];
+@@ -3276,2 +3279,10 @@
              t_la_us += ggml_time_us() - t0;
 +            std::uint64_t pf_bytes = 0;
 +            for (const auto & f : fills) {
@@ -234,6 +254,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
 +                static_cast<std::uint64_t>(tl), pf_bytes, nepenthes::phase_end, 0,
 +                pf_end >= pf_start ? pf_end - pf_start : 0);
+             la_job.store(-1, std::memory_order_relaxed);
 @@ -3282,9 +3293,19 @@
      void worker_loop() {
          pin_self(0);
@@ -278,3 +299,109 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.prefill_publish",
 +            static_cast<std::uint64_t>(&l - layers.data()),
 +            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
+
+
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -123,1 +123,1 @@
+-    ~llama_kv_cache() = default;
++    ~llama_kv_cache();
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -1,1 +1,2 @@
+ #include "llama-kv-cache.h"
++#include "nepenthes_trace.hpp"
+@@ -277,3 +278,4 @@
+         ggml_backend_buffer_t buf = ctxs_bufs.emplace(std::move(ctx), buft, "kv cache");
+ 
+         LLAMA_LOG_INFO("%s: %10s KV buffer size = %8.2f MiB\n", __func__, ggml_backend_buffer_name(buf), ggml_backend_buffer_get_size(buf)/1024.0/1024.0);
+@@ -290,4 +292,5 @@
+         LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u/%u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
+                 (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f), kv_size, (int) layers.size(), n_seq_max, n_stream,
+                 ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
+                 ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
++        nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.allocate", memory_size_k + memory_size_v, kv_size, nepenthes::phase_instant);
+@@ -374,1 +377,6 @@
+-void llama_kv_cache::clear(bool data) {
++llama_kv_cache::~llama_kv_cache() {
++    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.free", size_k_bytes() + size_v_bytes(), get_size(), nepenthes::phase_instant);
++}
++
++void llama_kv_cache::clear(bool data) {
+@@ -375,1 +383,2 @@
+ void llama_kv_cache::clear(bool data) {
++    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.clear", data ? 1 : 0, get_size(), nepenthes::phase_instant);
+@@ -1092,1 +1101,2 @@
+ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & ubatch) {
++    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.apply_ubatch", ubatch.n_tokens, sinfo.size() * sinfo.n_stream(), nepenthes::phase_instant);
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -1,1 +1,2 @@
+ #include <unordered_map>
++#include "../../../src/nepenthes_trace.hpp"
+@@ -190,2 +191,3 @@
+ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
+     ggml_cuda_set_device(device);
++    nepenthes::ScopedEvent nepenthes_alloc(nepenthes::EventType::allocation, "cuda.device_alloc", size, device);
+@@ -215,1 +217,4 @@
+     }
++    if (err == cudaErrorMemoryAllocation) {
++        nepenthes::emit(nepenthes::EventType::oom, "cuda.device_alloc_oom", size, device, nepenthes::flag_device | nepenthes::flag_failed);
++    }
+     return err;
+@@ -470,2 +473,3 @@
+             if (b.ptr != nullptr) {
++                nepenthes::emit(nepenthes::EventType::free_event, "cuda.pool.release", b.size, device, nepenthes::flag_device);
+                 CUDA_CHECK(cudaFree(b.ptr));
+@@ -570,2 +574,3 @@
+     void free(void * ptr, size_t size) override {
++        nepenthes::emit(nepenthes::EventType::free_event, "cuda.pool.return", size, device, nepenthes::flag_device);
+         for (int i = 0; i < MAX_BUFFERS; ++i) {
+@@ -784,3 +789,4 @@
+ static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
++    nepenthes::emit(nepenthes::EventType::free_event, "cuda.buffer.free", 0, ctx->device, nepenthes::flag_device);
+     delete ctx;
+@@ -824,2 +830,3 @@
+ static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d", size, ctx->device);
+@@ -832,2 +839,3 @@
+ static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h", size, ctx->device);
+@@ -849,2 +857,3 @@
+ static void ggml_backend_cuda_buffer_set_tensor_2d(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data,
+         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d_2d", size * n_copies, ctx->device);
+@@ -860,2 +869,3 @@
+ static void ggml_backend_cuda_buffer_get_tensor_2d(ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data,
+         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h_2d", size * n_copies, ctx->device);
+@@ -873,2 +883,3 @@
+ static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * src, ggml_tensor * dst) {
+     if (ggml_backend_buffer_is_cuda(src->buffer)) {
++        nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2d_or_peer", ggml_nbytes(src), 0);
+@@ -1328,2 +1339,3 @@
+     cudaError_t err = cudaMallocHost((void **) &ptr, size);
+     if (err != cudaSuccess) {
++        nepenthes::emit(nepenthes::EventType::fallback, "cuda.pinned_host_alloc_fallback", size, 0, nepenthes::flag_host | nepenthes::flag_failed);
+@@ -2268,1 +2282,2 @@
+ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    nepenthes::ScopedEvent nepenthes_kernel(nepenthes::EventType::kernel, ggml_op_name(dst->op), dst->op, ggml_nbytes(dst));
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -3001,2 +3001,3 @@
+     bool process_single_task(server_task && task, bool is_yielding) {
++        nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", task.id, task.type, nepenthes::phase_instant, task.id);
+         // while yielding, an encode / decode is running and only reading the server state is safe
+@@ -2403,2 +2404,3 @@
+     void send_final_response(server_slot & slot) {
++        nepenthes::emit(nepenthes::EventType::request_end, "server.request_end", slot.task->id, slot.id, nepenthes::phase_instant, slot.task->id);
+         auto res = std::make_unique<server_task_result_cmpl_final>();
