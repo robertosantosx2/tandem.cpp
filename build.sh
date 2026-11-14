@@ -15,6 +15,13 @@ elif git apply --check --reverse "$HERE/tandem.patch" 2>/dev/null; then
 else
   echo "tandem.patch does not apply to $(git rev-parse --short HEAD) (local changes?)"; exit 1
 fi
+if git apply --check "$HERE/nepenthes/runtime.patch" 2>/dev/null; then
+  git apply "$HERE/nepenthes/runtime.patch"
+elif git apply --check --reverse "$HERE/nepenthes/runtime.patch" 2>/dev/null; then
+  echo "NEPENTHES runtime probes are already applied"
+else
+  echo "NEPENTHES runtime.patch does not apply after tandem.patch"; exit 1
+fi
 cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release "$@"
 cmake --build build -j --target llama-server
 echo "built: $(pwd)/build/bin/llama-server"
