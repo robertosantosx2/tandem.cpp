@@ -281,7 +281,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                compute_cpu(layers[il]);
 +            }
              if (layers[il].pf_job) {
-@@ -3306,2 +3326,3 @@
+@@ -3302,2 +3322,3 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
@@ -321,11 +321,13 @@ diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
 +#include "nepenthes_trace.hpp"
  #include "llama-impl.h"
  #include "llama-io.h"
-@@ -283,3 +284,4 @@
+@@ -282,7 +283,8 @@
+     {
          const size_t memory_size_k = size_k_bytes();
          const size_t memory_size_v = size_v_bytes();
  
 +        nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.allocate", memory_size_k + memory_size_v, kv_size, nepenthes::phase_instant);
+         LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u/%u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
 @@ -374,3 +376,7 @@
  }
  
@@ -387,10 +389,12 @@ diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 +    nepenthes::emit(nepenthes::EventType::free_event, "cuda.buffer.free", buffer->size, ctx->device, nepenthes::flag_device);
      delete ctx;
  }
-@@ -902,2 +910,3 @@
+@@ -902,4 +910,5 @@
  static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
 +    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d", size, ctx->device);
+     ggml_cuda_set_device(ctx->device);
+     ggml_cuda_h2d((char *) tensor->data + offset, data, size, cudaStreamPerThread);
 @@ -910,2 +919,3 @@
  static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
