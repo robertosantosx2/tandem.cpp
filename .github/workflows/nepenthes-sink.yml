@@ -1,0 +1,21 @@
+name: NEPENTHES sink
+on:
+  push:
+    branches: [nepenthes/active-leones-sink-20261114]
+  pull_request:
+    branches: [main]
+    paths:
+      - "nepenthes/**"
+      - ".github/workflows/nepenthes-sink.yml"
+  workflow_dispatch:
+jobs:
+  cpp17-sink:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile bounded asynchronous sink
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+            -Inepenthes nepenthes/test_jsonl_sink.cpp -o /tmp/nepenthes-sink-test
+      - name: Exercise JSONL writer
+        run: /tmp/nepenthes-sink-test
