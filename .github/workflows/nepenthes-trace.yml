@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile C++17 trace smoke test
         run: |
-          g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
             -Inepenthes nepenthes/test_nepenthes_trace.cpp \
             -o /tmp/nepenthes-trace-test
       - name: Run trace smoke test
