@@ -147,6 +147,13 @@ private:
             case EventKind::oom: return "oom";
             case EventKind::fallback: return "fallback";
             case EventKind::error: return "error";
+            case EventKind::worker_wait: return "worker_wait";
+            case EventKind::worker_start: return "worker_start";
+            case EventKind::worker_compute: return "worker_compute";
+            case EventKind::worker_publish: return "worker_publish";
+            case EventKind::worker_done: return "worker_done";
+            case EventKind::prefetch_start: return "prefetch_start";
+            case EventKind::prefetch_end: return "prefetch_end";
         }
         return "error";
     }
@@ -172,6 +179,7 @@ private:
                     << "\",\"payload\":{\"object_id\":" << event.object_id
                     << ",\"bytes\":" << event.bytes << ",\"duration_ns\":" << event.duration_ns
                     << ",\"layer\":" << event.layer << ",\"expert\":" << event.expert
+                    << ",\"worker_id\":" << event.worker_id
                     << ",\"stream_id\":" << event.stream_id << ",\"flags\":" << event.flags << "}}\\n";
             if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
         }
