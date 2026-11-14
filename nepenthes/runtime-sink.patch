@@ -241,7 +241,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 @@ -3211,2 +3211,5 @@
              const int64_t t0 = ggml_time_us();
 +            const std::uint64_t pf_start = nepenthes::now_ns();
-+            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
++            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch.enqueue",
 +                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
              const layer & lt = layers[tl];
 @@ -3276,2 +3279,10 @@
@@ -251,11 +251,11 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                for (const ggml_tensor * w : lt.experts) pf_bytes += w->nb[2];
 +            }
 +            const std::uint64_t pf_end = nepenthes::now_ns();
-+            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
++            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch.enqueue",
 +                static_cast<std::uint64_t>(tl), pf_bytes, nepenthes::phase_end, 0,
 +                pf_end >= pf_start ? pf_end - pf_start : 0);
              la_job.store(-1, std::memory_order_relaxed);
-@@ -3282,9 +3293,19 @@
+@@ -3282,7 +3293,10 @@
      void worker_loop() {
          pin_self(0);
          for (;;) {
@@ -263,160 +263,88 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            const std::uint64_t wait_start = nepenthes::now_ns();
              idle_wait([&] { return (il = job_layer.load(std::memory_order_acquire)) != -1; });
 +            const std::uint64_t wait_end = nepenthes::now_ns();
-+            nepenthes::emit(nepenthes::EventType::stall, "moe.cpu_worker.wait",
-+                il >= 0 ? static_cast<std::uint64_t>(il) : 0, 0,
-+                nepenthes::phase_instant, 0, wait_end >= wait_start ? wait_end - wait_start : 0);
++            nepenthes::emit(nepenthes::EventType::stall, "moe.cpu_worker.wait", il >= 0 ? static_cast<std::uint64_t>(il) : 0, 0, nepenthes::phase_instant, 0, wait_end - wait_start);
              if (il == -2) {
                  return;
-             }
+@@ -3291,2 +3305,6 @@
 -            compute_cpu(layers[il]);
-+            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.start", il);
++            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.start", static_cast<std::uint64_t>(il));
 +            {
-+                nepenthes::ScopedEvent compute_event(nepenthes::EventType::stall,
-+                    "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));
++                nepenthes::ScopedEvent compute_event(nepenthes::EventType::stall, "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));
 +                compute_cpu(layers[il]);
 +            }
-@@ -3302,2 +3323,3 @@
+             if (layers[il].pf_job) {
+@@ -3302,2 +3322,3 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
-@@ -3798,6 +3820,9 @@
+@@ -3798,5 +3819,6 @@
      void post_cpu_out(layer & l) {
          memcpy(l.cpu_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
          volatile uint32_t * f = (volatile uint32_t *) l.flag->data;
          f[0] = f[0] + 1;
-+        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.publish",
-+            static_cast<std::uint64_t>(&l - layers.data()),
-+            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
-     }
-@@ -3805,5 +3830,8 @@
++        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.publish", static_cast<std::uint64_t>(&l - layers.data()), static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
+@@ -3805,5 +3827,6 @@
      void post_pf_out(layer & l) {
          memcpy(pf_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
          volatile uint32_t * f = (volatile uint32_t *) l.pf_flag->data;
          f[0] = f[0] + 1;
-+        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.prefill_publish",
-+            static_cast<std::uint64_t>(&l - layers.data()),
-+            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
-
-
-diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
---- a/src/llama-kv-cache.h
-+++ b/src/llama-kv-cache.h
-@@ -123,1 +123,1 @@
--    ~llama_kv_cache() = default;
-+    ~llama_kv_cache();
-diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
---- a/src/llama-kv-cache.cpp
-+++ b/src/llama-kv-cache.cpp
-@@ -1,1 +1,2 @@
- #include "llama-kv-cache.h"
-+#include "nepenthes_trace.hpp"
-@@ -290,4 +292,5 @@
-         LLAMA_LOG_INFO("%s: size = %7.2f MiB (%6u cells, %3d layers, %2u/%u seqs), K (%s): %7.2f MiB, V (%s): %7.2f MiB\n", __func__,
-                 (float)(memory_size_k + memory_size_v) / (1024.0f * 1024.0f), kv_size, (int) layers.size(), n_seq_max, n_stream,
-                 ggml_type_name(type_k), (float)memory_size_k / (1024.0f * 1024.0f),
-                 ggml_type_name(type_v), (float)memory_size_v / (1024.0f * 1024.0f));
-+        nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.allocate", memory_size_k + memory_size_v, kv_size, nepenthes::phase_instant);
-@@ -374,1 +377,5 @@
--void llama_kv_cache::clear(bool data) {
-+llama_kv_cache::~llama_kv_cache() {
-+    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.free", size_k_bytes() + size_v_bytes(), get_size(), nepenthes::phase_instant);
-+}
-+
-+void llama_kv_cache::clear(bool data) {
-@@ -375,1 +383,2 @@
- void llama_kv_cache::clear(bool data) {
-+    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.clear", data ? 1 : 0, get_size(), nepenthes::phase_instant);
-@@ -1092,1 +1101,2 @@
- void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & ubatch) {
-+    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.apply_ubatch", ubatch.n_tokens, sinfo.size() * sinfo.n_stream(), nepenthes::phase_instant);
-diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
---- a/ggml/src/ggml-cuda/ggml-cuda.cu
-+++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -1,1 +1,2 @@
- #include <unordered_map>
-+#include "../../../src/nepenthes_trace.hpp"
-@@ -190,2 +191,3 @@
- static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
-     ggml_cuda_set_device(device);
-+    nepenthes::ScopedEvent nepenthes_alloc(nepenthes::EventType::allocation, "cuda.device_alloc", size, device);
-@@ -215,2 +217,5 @@
-     }
-+    if (err == cudaErrorMemoryAllocation) {
-+        nepenthes::emit(nepenthes::EventType::oom, "cuda.device_alloc_oom", size, device, nepenthes::flag_device | nepenthes::flag_failed);
-+    }
-     return err;
-@@ -470,2 +473,3 @@
-             if (b.ptr != nullptr) {
-+                nepenthes::emit(nepenthes::EventType::free_event, "cuda.pool.release", b.size, device, nepenthes::flag_device);
-                 CUDA_CHECK(cudaFree(b.ptr));
-@@ -570,2 +574,3 @@
-     void free(void * ptr, size_t size) override {
-+        nepenthes::emit(nepenthes::EventType::free_event, "cuda.pool.return", size, device, nepenthes::flag_device);
-         for (int i = 0; i < MAX_BUFFERS; ++i) {
-@@ -784,3 +789,4 @@
- static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
-     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
-+    nepenthes::emit(nepenthes::EventType::free_event, "cuda.buffer.free", 0, ctx->device, nepenthes::flag_device);
-     delete ctx;
-@@ -824,2 +830,3 @@
- static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
-     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
-+    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d", size, ctx->device);
-@@ -832,2 +839,3 @@
- static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
-     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
-+    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h", size, ctx->device);
-@@ -849,3 +857,4 @@
- static void ggml_backend_cuda_buffer_set_tensor_2d(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data,
-         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
-     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
-+    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d_2d", size * n_copies, ctx->device);
-@@ -860,3 +869,4 @@
- static void ggml_backend_cuda_buffer_get_tensor_2d(ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data,
-         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
-     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
-+    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h_2d", size * n_copies, ctx->device);
-@@ -873,2 +883,3 @@
- static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * src, ggml_tensor * dst) {
-     if (ggml_backend_buffer_is_cuda(src->buffer)) {
-+        nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2d_or_peer", ggml_nbytes(src), 0);
-@@ -1328,2 +1339,3 @@
-     cudaError_t err = cudaMallocHost((void **) &ptr, size);
-     if (err != cudaSuccess) {
-+        nepenthes::emit(nepenthes::EventType::fallback, "cuda.pinned_host_alloc_fallback", size, 0, nepenthes::flag_host | nepenthes::flag_failed);
-@@ -2268,1 +2282,2 @@
- static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
-+    nepenthes::ScopedEvent nepenthes_kernel(nepenthes::EventType::kernel, ggml_op_name(dst->op), static_cast<std::uint64_t>(dst->op), ggml_nbytes(dst));
-diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
---- a/tools/server/server-context.cpp
-+++ b/tools/server/server-context.cpp
-@@ -3001,2 +3001,3 @@
-     bool process_single_task(server_task && task, bool is_yielding) {
-+        nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", task.id, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, task.id);
-         // while yielding, an encode / decode is running and only reading the server state is safe
-@@ -2403,2 +2404,3 @@
-     void send_final_response(server_slot & slot) {
-+        nepenthes::emit(nepenthes::EventType::request_end, "server.request_end", slot.task->id, slot.id, nepenthes::phase_instant, slot.task->id);
-         auto res = std::make_unique<server_task_result_cmpl_final>();
-
-
-diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
---- a/src/llama-moe-cache.cpp
-+++ b/src/llama-moe-cache.cpp
-@@ -8880,4 +8880,6 @@
++        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.prefill_publish", static_cast<std::uint64_t>(&l - layers.data()), static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
+@@ -8880,4 +8904,6 @@
      void la_join(ggml_backend_t backend) {
          if (la_pending) {
 +            const std::uint64_t wait_start = nepenthes::now_ns();
              ggml_backend_event_wait(backend, la_event);
 +            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch.wait", la_pend_list.size(), 0, nepenthes::phase_instant, 0, nepenthes::now_ns() - wait_start);
              la_pending = false;
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -116,8 +116,8 @@
+         const  layer_share_cb & share,
+         // a model can hold more than one cache, so the tensor names have to stay unique
+                  const char *   name_tag = "");
+ 
+-    ~llama_kv_cache() = default;
++    ~llama_kv_cache();
+ 
+     //
+     // llama_memory_i
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -1114,5 +1114,6 @@
+@@ -1,4 +1,5 @@
+ #include "llama-kv-cache.h"
+ 
++#include "nepenthes_trace.hpp"
+ #include "llama-impl.h"
+ #include "llama-io.h"
+@@ -286,2 +286,3 @@
+         const size_t memory_size_k = size_k_bytes();
+         const size_t memory_size_v = size_v_bytes();
++        nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.allocate", memory_size_k + memory_size_v, kv_size, nepenthes::phase_instant);
+@@ -374,3 +374,7 @@
+ }
+ 
+-void llama_kv_cache::clear(bool data) {
++llama_kv_cache::~llama_kv_cache() {
++    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.free", size_k_bytes() + size_v_bytes(), get_size(), nepenthes::phase_instant);
++}
++
++void llama_kv_cache::clear(bool data) {
+@@ -376,1 +382,2 @@
+ void llama_kv_cache::clear(bool data) {
++    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.clear", data ? 1 : 0, get_size(), nepenthes::phase_instant);
+@@ -1092,5 +1099,6 @@
+ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & ubatch) {
+     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
+     if (other) {
+         return;
+     }
++    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.apply_ubatch", ubatch.n_tokens, sinfo.size() * sinfo.n_stream(), nepenthes::phase_instant);
+@@ -1114,5 +1122,6 @@
              if (!cells.is_empty(idx)) {
                  assert(cells.seq_count(idx) == 1);
  
@@ -426,38 +354,91 @@ diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -784,3 +784,3 @@
+@@ -1,4 +1,5 @@
+ #include <unordered_map>
+ #include "ggml-cuda.h"
++#include "../../../src/nepenthes_trace.hpp"
+ #include "ggml-impl.h"
+ #include "ggml-backend-impl.h"
+@@ -190,2 +191,3 @@
+ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
+     ggml_cuda_set_device(device);
++    nepenthes::ScopedEvent nepenthes_alloc(nepenthes::EventType::allocation, "cuda.device_alloc", size, device);
+@@ -215,2 +216,5 @@
+     }
++    if (err == cudaErrorMemoryAllocation) {
++        nepenthes::emit(nepenthes::EventType::oom, "cuda.device_alloc_oom", size, device, nepenthes::flag_device | nepenthes::flag_failed);
++    }
+     return err;
+@@ -470,3 +474,4 @@
+             ggml_cuda_buffer & b = buffer_pool[i];
+             if (b.ptr != nullptr) {
++                nepenthes::emit(nepenthes::EventType::free_event, "cuda.pool.release", b.size, device, nepenthes::flag_device);
+                 CUDA_CHECK(cudaFree(b.ptr));
+@@ -570,2 +575,3 @@
+     void free(void * ptr, size_t size) override {
++        nepenthes::emit(nepenthes::EventType::free_event, "cuda.pool.return", size, device, nepenthes::flag_device);
+         for (int i = 0; i < MAX_BUFFERS; ++i) {
+@@ -784,4 +790,5 @@
  static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
--    nepenthes::emit(nepenthes::EventType::free_event, "cuda.buffer.free", 0, ctx->device, nepenthes::flag_device);
 +    nepenthes::emit(nepenthes::EventType::free_event, "cuda.buffer.free", buffer->size, ctx->device, nepenthes::flag_device);
-@@ -937,4 +937,5 @@
+     delete ctx;
+ }
+@@ -824,2 +831,3 @@
+ static void ggml_backend_cuda_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d", size, ctx->device);
+@@ -832,2 +840,3 @@
+ static void ggml_backend_cuda_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h", size, ctx->device);
+@@ -849,3 +858,4 @@
+ static void ggml_backend_cuda_buffer_set_tensor_2d(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data,
+         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *) buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.h2d_2d", size * n_copies, ctx->device);
+@@ -860,3 +870,4 @@
+ static void ggml_backend_cuda_buffer_get_tensor_2d(ggml_backend_buffer_t buffer, const struct ggml_tensor * tensor, void * data,
+         size_t offset, size_t size, size_t n_copies, size_t stride_tensor, size_t stride_data) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
++    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h_2d", size * n_copies, ctx->device);
+@@ -873,2 +883,3 @@
+ static bool ggml_backend_cuda_buffer_cpy_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * src, ggml_tensor * dst) {
+     if (ggml_backend_buffer_is_cuda(src->buffer)) {
++        nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2d_or_peer", ggml_nbytes(src), 0);
+@@ -937,4 +948,5 @@
      if (err != cudaSuccess) {
          // clear the error
          (void)cudaGetLastError();
 +        nepenthes::emit(nepenthes::EventType::oom, "cuda.buffer_alloc_oom", size, buft_ctx->device, nepenthes::flag_device | nepenthes::flag_failed);
          GGML_LOG_ERROR("%s: allocating %.2f MiB on device %d: cudaMalloc failed: %s\n", __func__, size / 1024.0 / 1024.0, buft_ctx->device, cudaGetErrorString(err));
-@@ -1318,2 +1318,3 @@
+@@ -1318,2 +1330,3 @@
  static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
 +    nepenthes::emit(nepenthes::EventType::free_event, "cuda.pinned_host.free", 0, 0, nepenthes::flag_host);
      CUDA_CHECK(cudaFreeHost(buffer->context));
-@@ -1337,3 +1338,4 @@
+@@ -1337,3 +1350,4 @@
      }
  
 +    nepenthes::emit(nepenthes::EventType::allocation, "cuda.pinned_host.alloc", size, 0, nepenthes::flag_host);
      return ptr;
-@@ -1342,3 +1344,4 @@
+@@ -1342,3 +1356,4 @@
      if (ptr == nullptr) {
          // fallback to cpu buffer
 +        nepenthes::emit(nepenthes::EventType::fallback, "cuda.pinned_host.to_cpu", size, 0, nepenthes::flag_host | nepenthes::flag_failed);
          return ggml_backend_buft_alloc_buffer(ggml_backend_cpu_buffer_type(), size);
+@@ -2268,2 +2283,3 @@
+ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct ggml_tensor * dst) {
++    nepenthes::ScopedEvent nepenthes_kernel(nepenthes::EventType::kernel, ggml_op_name(dst->op), static_cast<std::uint64_t>(dst->op), ggml_nbytes(dst));
+     switch (dst->op) {
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -3001,2 +3001,3 @@
-     bool process_single_task(server_task && task, bool is_yielding) {
-+        nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", task.id, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, task.id);
-         // while yielding, an encode / decode is running and only reading the server state is safe
+@@ -3001,3 +3001,4 @@
+                     const int id_task = task.id;
+ 
++                    nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", id_task, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, id_task);
+                     server_slot * slot = get_available_slot(task);
 @@ -2403,2 +2404,3 @@
      void send_final_response(server_slot & slot) {
 +        nepenthes::emit(nepenthes::EventType::request_end, "server.request_end", slot.task->id, slot.id, nepenthes::phase_instant, slot.task->id);
