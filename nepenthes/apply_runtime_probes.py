@@ -433,9 +433,15 @@ def main() -> int:
     )
     replace_once(
         root, moe,
-        '        job_layer.store(il, std::memory_order_release);\n',
+        '        l.pf_job  = true;\n'
+        '        l.t_start = ggml_time_us();\n'
+        '        job_done.store(false, std::memory_order_relaxed);\n'
+        '        job_layer.store(il, std::memory_order_release);',
+        '        l.pf_job  = true;\n'
+        '        l.t_start = ggml_time_us();\n'
+        '        job_done.store(false, std::memory_order_relaxed);\n'
         '        job_layer.store(il, std::memory_order_release);\n'
-        '        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
+        '        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));',
         "CPU prefetch worker job enqueue",
     )
     replace_once(
