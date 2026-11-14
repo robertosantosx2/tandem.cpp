@@ -45,6 +45,10 @@ jobs:
           grep -n -B2 -A3 'std::thread worker;' /tmp/llama.cpp/src/llama-moe-cache.cpp
           grep -n -B4 -A8 'void la_loop()' /tmp/llama.cpp/src/llama-moe-cache.cpp
           grep -n -B2 -A6 'la_job.load' /tmp/llama.cpp/src/llama-moe-cache.cpp
+          grep -n -B2 -A5 'job_done.store(true' /tmp/llama.cpp/src/llama-moe-cache.cpp
+          grep -n -B2 -A5 'ggml_cuda_device_malloc' /tmp/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu
+          grep -n -B2 -A5 'memory_size_k = size_k_bytes' /tmp/llama.cpp/src/llama-kv-cache.cpp
+          grep -n -B2 -A5 'const int id_task = task.id' /tmp/llama.cpp/tools/server/server-context.cpp
           git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime-sink.patch"
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime-sink.patch"
           cat > /tmp/nepenthes-runtime-smoke.cpp <<'EOF'
