@@ -429,7 +429,14 @@ def main() -> int:
         '            job_layer.store(il, std::memory_order_release);\n',
         '            job_layer.store(il, std::memory_order_release);\n'
         '            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
-        3, "CPU worker job enqueue",
+        2, "CPU worker job enqueue",
+    )
+    replace_once(
+        root, moe,
+        '        job_layer.store(il, std::memory_order_release);\n',
+        '        job_layer.store(il, std::memory_order_release);\n'
+        '        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
+        "CPU prefetch worker job enqueue",
     )
     replace_once(
         root, moe,
