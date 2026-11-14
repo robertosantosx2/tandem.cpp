@@ -109,6 +109,7 @@ private:
             case EventType::transfer: return "transfer";
             case EventType::kernel: return "kernel";
             case EventType::sync: return "sync";
+            case EventType::cpu_work: return "cpu_work";
             case EventType::stall: return "stall";
             case EventType::oom: return "oom";
             case EventType::fallback: return "fallback";
