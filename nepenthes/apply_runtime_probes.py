@@ -259,6 +259,46 @@ def main() -> int:
         '    bool updated = false;',
         "KV update duration",
     )
+    # Sequence-level KV mutations: capture operation duration plus identifiers/ranges.
+    replace_once(
+        root, kv,
+        'bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {\n',
+        'bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {\n'
+        '    nepenthes::ScopedEvent seq_event(nepenthes::EventType::kv_cache, "kv_cache.seq_rm", static_cast<std::uint64_t>(seq_id), static_cast<std::uint64_t>(p0));\n'
+        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.seq_rm.range", static_cast<std::uint64_t>(p0), static_cast<std::uint64_t>(p1));\n',
+        "KV sequence remove",
+    )
+    replace_once(
+        root, kv,
+        'void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {\n',
+        'void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {\n'
+        '    nepenthes::ScopedEvent seq_event(nepenthes::EventType::kv_cache, "kv_cache.seq_cp", static_cast<std::uint64_t>(seq_id_src), static_cast<std::uint64_t>(seq_id_dst));\n'
+        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.seq_cp.range", static_cast<std::uint64_t>(p0), static_cast<std::uint64_t>(p1));\n',
+        "KV sequence copy",
+    )
+    replace_once(
+        root, kv,
+        'void llama_kv_cache::seq_keep(llama_seq_id seq_id) {\n',
+        'void llama_kv_cache::seq_keep(llama_seq_id seq_id) {\n'
+        '    nepenthes::ScopedEvent seq_event(nepenthes::EventType::kv_cache, "kv_cache.seq_keep", static_cast<std::uint64_t>(seq_id));\n',
+        "KV sequence keep",
+    )
+    replace_once(
+        root, kv,
+        'void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos shift) {\n',
+        'void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos shift) {\n'
+        '    nepenthes::ScopedEvent seq_event(nepenthes::EventType::kv_cache, "kv_cache.seq_add", static_cast<std::uint64_t>(seq_id), static_cast<std::uint64_t>(shift));\n'
+        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.seq_add.range", static_cast<std::uint64_t>(p0), static_cast<std::uint64_t>(p1));\n',
+        "KV sequence add",
+    )
+    replace_once(
+        root, kv,
+        'void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {\n',
+        'void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {\n'
+        '    nepenthes::ScopedEvent seq_event(nepenthes::EventType::kv_cache, "kv_cache.seq_div", static_cast<std::uint64_t>(seq_id), static_cast<std::uint64_t>(d));\n'
+        '    nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.seq_div.range", static_cast<std::uint64_t>(p0), static_cast<std::uint64_t>(p1));\n',
+        "KV sequence divide",
+    )
 
     # Generic backend buffer lifecycle covers ordinary CPU allocations as well as
     # backend buffers. CUDA-specific probes below add device-level detail.
