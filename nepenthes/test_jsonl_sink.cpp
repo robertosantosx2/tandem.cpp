@@ -52,6 +52,8 @@ int main() {
     std::string line;
     std::size_t count = 0;
     while (std::getline(input, line)) {
+        assert(!line.empty());
+        assert(line.back() == '}'); // Reject a literal \\n suffix instead of a record newline.
         assert(line.find("\"source\":\"tandem.cpp\"") != std::string::npos);
         assert(line.find("\"run_id\":\"run\\\"line\\nbreak\"") != std::string::npos);
         if (count < 256) {
