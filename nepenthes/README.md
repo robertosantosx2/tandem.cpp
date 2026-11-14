@@ -24,7 +24,10 @@ export NEPENTHES_RUN_ID="qwen35-35b-$(date +%Y%m%d-%H%M%S)"
 The sink is created lazily at the first graph-compute entry. Capture is disabled
 when \`NEPENTHES_TRACE_JSONL\` is unset. The writer thread owns file I/O; the
 producer callback only enqueues events. Queue capacity is fixed and overflow
-is counted. The process-lifetime sink closes its writer during shutdown.
+is counted. Shutdown disables new callbacks, waits for callbacks already in
+flight, drains the bounded queue, and joins the writer before the sink is
+destroyed. Producer threads should still be stopped at the normal engine
+lifecycle boundary before process teardown.
 
 ## Runtime coverage
 
