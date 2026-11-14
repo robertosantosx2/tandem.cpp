@@ -275,7 +275,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
          f[0] = f[0] + 1;
 +        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.publish",
 +            static_cast<std::uint64_t>(&l - layers.data()),
-+            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_end);
++            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
      }
 @@ -4115,8 +4153,11 @@
      void post_pf_out(layer & l) {
