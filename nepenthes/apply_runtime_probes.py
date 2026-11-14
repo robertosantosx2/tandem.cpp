@@ -305,9 +305,11 @@ def main() -> int:
     )
     replace_once(
         root, cu,
-        '    CUDA_CHECK(cudaMemcpy2DAsync(data, stride_data, (const char *) tensor->data + offset, stride_tensor, size, n_copies, cudaMemcpyDeviceToHost, cudaStreamPerThread));',
+        '    CUDA_CHECK(cudaMemcpy2DAsync(\n'
+        '        data, stride_data, (const char *) tensor->data + offset, stride_tensor, size, n_copies, cudaMemcpyDeviceToHost, cudaStreamPerThread));',
         '    nepenthes::ScopedEvent nepenthes_transfer(nepenthes::EventType::transfer, "cuda.d2h_2d", size * n_copies, ctx->device);\n'
-        '    CUDA_CHECK(cudaMemcpy2DAsync(data, stride_data, (const char *) tensor->data + offset, stride_tensor, size, n_copies, cudaMemcpyDeviceToHost, cudaStreamPerThread));',
+        '    CUDA_CHECK(cudaMemcpy2DAsync(\n'
+        '        data, stride_data, (const char *) tensor->data + offset, stride_tensor, size, n_copies, cudaMemcpyDeviceToHost, cudaStreamPerThread));',
         "CUDA D2H 2D",
     )
     replace_once(
