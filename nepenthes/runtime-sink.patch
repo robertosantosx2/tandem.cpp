@@ -273,7 +273,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            nepenthes::emit(nepenthes::EventType::stall, "moe.cpu_worker.wait", il >= 0 ? static_cast<std::uint64_t>(il) : 0, 0, nepenthes::phase_instant, 0, wait_end - wait_start);
              if (il == -2) {
                  return;
-@@ -3290,2 +3306,6 @@
+@@ -3294,2 +3310,6 @@
 -            compute_cpu(layers[il]);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.start", static_cast<std::uint64_t>(il));
 +            {
@@ -281,7 +281,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                compute_cpu(layers[il]);
 +            }
              if (layers[il].pf_job) {
-@@ -3302,2 +3322,3 @@
+@@ -3306,2 +3326,3 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
@@ -321,9 +321,10 @@ diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
 +#include "nepenthes_trace.hpp"
  #include "llama-impl.h"
  #include "llama-io.h"
-@@ -283,2 +284,3 @@
+@@ -283,3 +284,4 @@
          const size_t memory_size_k = size_k_bytes();
          const size_t memory_size_v = size_v_bytes();
+ 
 +        nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.allocate", memory_size_k + memory_size_v, kv_size, nepenthes::phase_instant);
 @@ -374,3 +376,7 @@
  }
@@ -360,10 +361,11 @@ diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 +#include "../../../src/nepenthes_trace.hpp"
  #include "ggml-impl.h"
  #include "ggml-backend-impl.h"
-@@ -190,2 +191,3 @@
+@@ -190,3 +191,4 @@
  static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
      ggml_cuda_set_device(device);
 +    nepenthes::ScopedEvent nepenthes_alloc(nepenthes::EventType::allocation, "cuda.device_alloc", size, device);
+     cudaError_t err;
 @@ -216,2 +218,5 @@
      }
 +    if (err == cudaErrorMemoryAllocation) {
