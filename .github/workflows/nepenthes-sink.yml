@@ -1,4 +1,4 @@
-name: NEPENTHES sink
+name: NEPENTHES sink and runtime patch
 on:
   push:
     branches: [nepenthes/active-leones-sink-20261114]
@@ -19,3 +19,10 @@ jobs:
             -Inepenthes nepenthes/test_jsonl_sink.cpp -o /tmp/nepenthes-sink-test
       - name: Exercise JSONL writer
         run: /tmp/nepenthes-sink-test
+      - name: Validate runtime probe patch against pinned llama.cpp base
+        run: |
+          git clone --filter=blob:none https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          git -C /tmp/llama.cpp checkout f5222f25c18da062ab2b8a2dbbfbf4feae398566
+          git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/tandem.patch"
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
+          git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/0001-runtime-worker-prefetch.patch"
