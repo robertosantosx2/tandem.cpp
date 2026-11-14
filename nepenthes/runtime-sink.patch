@@ -321,7 +321,7 @@ diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
 +#include "nepenthes_trace.hpp"
  #include "llama-impl.h"
  #include "llama-io.h"
-@@ -282,7 +283,8 @@
+@@ -282,5 +283,6 @@
      {
          const size_t memory_size_k = size_k_bytes();
          const size_t memory_size_v = size_v_bytes();
