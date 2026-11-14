@@ -44,6 +44,11 @@ jobs:
           python3 -m py_compile "$GITHUB_WORKSPACE/nepenthes/apply_runtime_probes.py"
           python3 "$GITHUB_WORKSPACE/nepenthes/apply_runtime_probes.py" /tmp/llama.cpp
           git -C /tmp/llama.cpp diff --check
+          cmake -S /tmp/llama.cpp -B /tmp/llama-build \
+            -DGGML_CUDA=OFF -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/llama-build --target llama-server -j2
           cat > /tmp/nepenthes-runtime-smoke.cpp <<'EOF'
           #include "nepenthes_jsonl_sink.hpp"
           int main() {
