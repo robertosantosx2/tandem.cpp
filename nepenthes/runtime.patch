@@ -137,7 +137,7 @@ index a2f68ed..0000000 100644
  #include "../../src/llama-moe-cache.h"
 +#include "../../src/nepenthes_trace.hpp"
  #include "server-chat.h"
-@@ -2342,7 +2342,8 @@ private:
+@@ -2342,6 +2342,7 @@ private:
          n_empty_consecutive = 0;
  
          SLT_INF(slot, "processing task, is_child = %d\n", slot.task->is_child());
