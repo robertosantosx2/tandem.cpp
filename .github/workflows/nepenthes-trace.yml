@@ -35,8 +35,14 @@ jobs:
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
           git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          cat > /tmp/nepenthes-runtime-smoke.cpp <<'EOF'
+          #include "nepenthes_trace.hpp"
+          int main() {
+              nepenthes::emit(nepenthes::EventType::cache_hit, "runtime-header", 1, 2);
+              return 0;
+          }
+          EOF
           g++ -std=c++17 -O2 -Wall -Wextra -Werror \
-            -I/tmp/llama.cpp/src -I"$GITHUB_WORKSPACE/nepenthes" \
-            "$GITHUB_WORKSPACE/nepenthes/test_nepenthes_trace.cpp" \
+            -I/tmp/llama.cpp/src /tmp/nepenthes-runtime-smoke.cpp \
             -o /tmp/nepenthes-runtime-trace-test
           /tmp/nepenthes-runtime-trace-test
