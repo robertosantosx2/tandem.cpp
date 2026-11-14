@@ -210,7 +210,7 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 +#include "nepenthes_jsonl_sink.hpp"
  
  #include "ggml.h"
-@@ -3093,4 +3093,5 @@
+@@ -3093,4 +3094,5 @@
  ggml_status llama_context::graph_compute(
              ggml_cgraph * gf,
                     bool   batched) {
@@ -227,7 +227,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            const std::uint64_t pf_start = nepenthes::now_ns();
 +            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
 +                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
-@@ -3278,3 +3289,11 @@
+@@ -3275,3 +3278,11 @@
              }
              t_la_us += ggml_time_us() - t0;
 +            std::uint64_t pf_bytes = 0;
@@ -239,7 +239,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                static_cast<std::uint64_t>(tl), pf_bytes, nepenthes::phase_end, 0,
 +                pf_end >= pf_start ? pf_end - pf_start : 0);
              la_job.store(-1, std::memory_order_relaxed);
-@@ -3293,9 +3312,19 @@
+@@ -3282,9 +3293,19 @@
      void worker_loop() {
          pin_self(0);
          for (;;) {
@@ -260,11 +260,11 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                    "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));
 +                compute_cpu(layers[il]);
 +            }
-@@ -3323,2 +3352,3 @@
+@@ -3302,2 +3323,3 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
-@@ -3820,6 +3850,9 @@
+@@ -3798,6 +3820,9 @@
      void post_cpu_out(layer & l) {
          memcpy(l.cpu_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
@@ -274,7 +274,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            static_cast<std::uint64_t>(&l - layers.data()),
 +            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
      }
-@@ -3830,6 +3863,9 @@
+@@ -3805,6 +3830,9 @@
      void post_pf_out(layer & l) {
          memcpy(pf_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
