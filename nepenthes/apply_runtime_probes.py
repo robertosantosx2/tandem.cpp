@@ -228,6 +228,37 @@ def main() -> int:
         '                nepenthes::emit(nepenthes::EventType::eviction, "kv_cache.cell_reuse", idx, static_cast<std::uint64_t>(seq_id), nepenthes::flag_host);',
         "KV cell reuse",
     )
+    replace_once(
+        root, kv,
+        '            if (cells.seq_has(i, seq_id) && cells.seq_rm(i, seq_id)) {\n'
+        '                if (new_head == cells.size()) {',
+        '            if (cells.seq_has(i, seq_id) && cells.seq_rm(i, seq_id)) {\n'
+        '                nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.cell_release", i, static_cast<std::uint64_t>(seq_id), nepenthes::phase_instant);\n'
+        '                if (new_head == cells.size()) {',
+        "KV cell release",
+    )
+    replace_once(
+        root, kv,
+        '                cells.rm(i);\n'
+        '                if (new_head == cells.size()) {',
+        '                cells.rm(i);\n'
+        '                nepenthes::emit(nepenthes::EventType::kv_cache, "kv_cache.cell_release_all", i, s, nepenthes::phase_instant);\n'
+        '                if (new_head == cells.size()) {',
+        "KV release all",
+    )
+    replace_once(
+        root, kv,
+        '    if (other) {\n'
+        '        return true;\n'
+        '    }\n\n'
+        '    bool updated = false;',
+        '    if (other) {\n'
+        '        return true;\n'
+        '    }\n\n'
+        '    nepenthes::ScopedEvent kv_update(nepenthes::EventType::kv_cache, "kv_cache.update", get_size());\n'
+        '    bool updated = false;',
+        "KV update duration",
+    )
 
     # Generic backend buffer lifecycle covers ordinary CPU allocations as well as
     # backend buffers. CUDA-specific probes below add device-level detail.
@@ -397,6 +428,12 @@ def main() -> int:
     server = "tools/server/server-context.cpp"
     replace_once(
         root, server,
+        '#include "../../src/nepenthes_trace.hpp"\n',
+        '#include "../../src/nepenthes_trace.hpp"\n#include "../../src/nepenthes_jsonl_sink.hpp"\n',
+        "server sink include",
+    )
+    replace_once(
+        root, server,
         '    void send_final_response(server_slot & slot) {\n',
         '    void send_final_response(server_slot & slot) {\n'
         '        nepenthes::emit(nepenthes::EventType::request_end, "server.request_end", slot.task->id, slot.id, nepenthes::phase_instant, slot.task->id);\n',
@@ -406,6 +443,7 @@ def main() -> int:
         root, server,
         '                    const int id_task = task.id;\n',
         '                    const int id_task = task.id;\n'
+        '                    nepenthes::ensure_sink_from_env();\n'
         '                    nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", id_task, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, id_task);\n',
         "request start",
     )
