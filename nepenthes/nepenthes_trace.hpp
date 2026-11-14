@@ -4,13 +4,15 @@
 // C++17, header-only, no heap allocation on the emit path.
 //
 // The sink must be installed before worker threads start and removed only
-// after they have stopped. The sink itself must be non-blocking and
-// thread-safe. Labels are borrowed string literals and must be consumed
+// after they have stopped. Disabling a sink also waits for callbacks that
+// already entered it, so its context may be safely destroyed after set_sink
+// returns. Labels are borrowed string literals and must be consumed
 // synchronously by the sink.
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <thread>
 
 namespace nepenthes {
 
@@ -49,6 +51,11 @@ inline std::atomic<Sink> & sink_slot() noexcept {
     return slot;
 }
 
+inline std::atomic<std::uint32_t> & active_emitters() noexcept {
+    static std::atomic<std::uint32_t> count{0};
+    return count;
+}
+
 inline std::uint64_t now_ns() noexcept {
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -56,9 +63,15 @@ inline std::uint64_t now_ns() noexcept {
 }
 
 // Install/disable only at a controlled lifecycle boundary, never while
-// producer threads are concurrently being created or destroyed.
+// producer threads are concurrently being created or destroyed. Disabling
+// first prevents new callbacks, then waits for callbacks already in flight.
 inline void set_sink(Sink sink) noexcept {
     sink_slot().store(sink, std::memory_order_release);
+    if (sink == nullptr) {
+        while (active_emitters().load(std::memory_order_acquire) != 0) {
+            std::this_thread::yield();
+        }
+    }
 }
 
 inline void emit(EventType type, const char * label = nullptr,
@@ -68,6 +81,15 @@ inline void emit(EventType type, const char * label = nullptr,
                  std::uint64_t duration_ns = 0) noexcept {
     const Sink sink = sink_slot().load(std::memory_order_acquire);
     if (sink == nullptr) return;
+
+    active_emitters().fetch_add(1, std::memory_order_acq_rel);
+    // An emitter can have loaded the old callback just before shutdown.
+    // Recheck after joining the in-flight set so disable() cannot race it.
+    if (sink_slot().load(std::memory_order_acquire) != sink) {
+        active_emitters().fetch_sub(1, std::memory_order_release);
+        return;
+    }
+
     Event event;
     event.monotonic_ns = now_ns();
     event.duration_ns = duration_ns;
@@ -78,6 +100,7 @@ inline void emit(EventType type, const char * label = nullptr,
     event.flags = flags;
     event.label = label;
     sink(event);
+    active_emitters().fetch_sub(1, std::memory_order_release);
 }
 
 class ScopedEvent {
