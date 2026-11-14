@@ -26,6 +26,12 @@ jobs:
             -o /tmp/nepenthes-trace-test
       - name: Run trace smoke test
         run: /tmp/nepenthes-trace-test
+      - name: Compile and run JSONL sink test
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+            -Inepenthes nepenthes/test_nepenthes_jsonl_sink.cpp \
+            -o /tmp/nepenthes-jsonl-test
+          /tmp/nepenthes-jsonl-test
       - name: Verify runtime patches apply to pinned llama.cpp base
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
@@ -35,10 +41,14 @@ jobs:
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
           git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime-sink.patch"
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime-sink.patch"
           cat > /tmp/nepenthes-runtime-smoke.cpp <<'EOF'
-          #include "nepenthes_trace.hpp"
+          #include "nepenthes_jsonl_sink.hpp"
           int main() {
+              nepenthes::JsonlSink sink("/tmp/nepenthes-runtime-smoke.jsonl", "ci");
               nepenthes::emit(nepenthes::EventType::cache_hit, "runtime-header", 1, 2);
+              sink.close();
               return 0;
           }
           EOF
