@@ -119,7 +119,7 @@ def main() -> int:
         '            if (layers[il].pf_job) {',
         '            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.start", static_cast<std::uint64_t>(il));\n'
         '            {\n'
-        '                nepenthes::ScopedEvent compute_event(nepenthes::EventType::stall, "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));\n'
+        '                nepenthes::ScopedEvent compute_event(nepenthes::EventType::cpu_work, "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));\n'
         '                compute_cpu(layers[il]);\n'
         '            }\n'
         '            if (layers[il].pf_job) {',
