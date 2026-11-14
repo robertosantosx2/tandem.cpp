@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <stdexcept>
 #include <thread>
 
 namespace nepenthes {
