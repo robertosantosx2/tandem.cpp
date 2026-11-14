@@ -60,3 +60,32 @@ jobs:
             -I/tmp/llama.cpp/src /tmp/nepenthes-runtime-smoke.cpp \
             -o /tmp/nepenthes-runtime-trace-test
           /tmp/nepenthes-runtime-trace-test
+
+  cuda-compile:
+    runs-on: ubuntu-24.04
+    container:
+      image: nvidia/cuda:12.9.1-devel-ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential cmake git python3 libcurl4-openssl-dev pkg-config
+      - name: Apply Tandem and NEPENTHES runtime probes
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          git -C /tmp/llama.cpp fetch --depth=1 origin f5222f25c18da062ab2b8a2dbbfbf4feae398566
+          git -C /tmp/llama.cpp checkout -q FETCH_HEAD
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          python3 "$GITHUB_WORKSPACE/nepenthes/apply_runtime_probes.py" /tmp/llama.cpp
+          git -C /tmp/llama.cpp diff --check
+      - name: Compile CUDA-enabled llama-server
+        run: |
+          cmake -S /tmp/llama.cpp -B /tmp/llama-cuda-build \
+            -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
+            -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/llama-cuda-build --target llama-server -j2
