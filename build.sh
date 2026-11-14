@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build tandem.cpp: clone llama.cpp at the base commit, apply tandem.patch, build llama-server with CUDA.
+# Build tandem.cpp: clone pinned llama.cpp, apply Tandem and NEPENTHES probes, build llama-server with CUDA.
 # usage: bash build.sh [dir] [extra cmake args, e.g. -DCMAKE_CUDA_ARCHITECTURES=89]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
