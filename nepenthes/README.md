@@ -1,47 +1,61 @@
 # NEPENTHES instrumentation for tandem.cpp
 
-This directory defines the low-overhead event contract shared with the
-LEONES universal collector.
+This directory contains the low-overhead event contract, JSONL sink, runtime
+patch layers and tests shared with the LEONES universal collector.
 
-## Current scope
+## Active capture
 
-- \`nepenthes_trace.hpp\`: C++17, header-only, allocation-free emit interface.
-- \`test_nepenthes_trace.cpp\`: standalone smoke test for disabled/enabled
-  sinks, event metadata and scoped duration events.
+The build applies the patch layers in this order:
 
-The hook is **not yet wired into llama.cpp/tandem.cpp runtime call sites**.
-That integration is a separate patch layer because this repository carries
-\`tandem.patch\` against the pinned llama.cpp base rather than a full source
-checkout. Do not interpret a passing smoke test as proof that runtime events
-are being captured.
+1. `tandem.patch` — Tandem.cpp engine changes against the pinned llama.cpp base.
+2. `nepenthes/runtime.patch` — trace hook plus initial graph, synchronization,
+   MoE cache and server routing callsites.
+3. `nepenthes/runtime-sink.patch` — bounded asynchronous JSONL sink and
+   initial MoE CPU-worker wait/compute/publication and lookahead-prefetch probes.
 
-## Event contract
+Enable capture before starting the server:
 
-Events carry a steady-clock timestamp in nanoseconds, optional duration,
-optional request correlation ID, two numeric values, a type, flags and a
-borrowed static label. A zero request ID means correlation is unavailable;
-the instrumentation must not synthesize request identity.
+```bash
+export NEPENTHES_TRACE_JSONL="$HOME/nepenthes-run.jsonl"
+export NEPENTHES_RUN_ID="qwen35-35b-$(date +%Y%m%d-%H%M%S)"
+```
 
-The sink must consume the event synchronously, must not retain the borrowed
-label pointer, and must be non-blocking and thread-safe. Install it before
-worker threads start; disable it after workers stop. Do not hot-swap the sink
-while producers are active.
+The sink is created by the MoE cache when the engine initializes it. It is
+disabled by default. Its queue is bounded; overflow increments a dropped-event
+counter. The writer thread owns file I/O. The sink is closed after the MoE
+worker/helper threads have stopped.
 
-Suggested call-site mapping:
+## Current coverage
 
-| Runtime area | Event types |
+| Runtime area | Status |
 |---|---|
-| request lifecycle | request_start, request_end |
-| model lifecycle | model_load, model_unload |
-| MoE routing | routing |
-| expert cache | cache_hit, cache_miss, eviction, prefetch |
-| KV cache | kv_cache |
-| memory | allocation, free_event, oom |
-| CPU/GPU movement | transfer |
-| kernel dispatch | kernel |
-| synchronization / CPU worker waits | sync, stall |
-| degraded execution | fallback, error |
+| Graph compute duration | Hook in runtime patch; graph-level, not individual CUDA kernels |
+| Context synchronization | Hook in runtime patch |
+| MoE cache hit/miss and eviction | Hook in runtime patch |
+| Server task-to-slot routing | Hook in runtime patch |
+| JSONL sink lifecycle | Active when NEPENTHES_TRACE_JSONL is set |
+| MoE CPU worker wait/compute/done | Initial callsites in runtime-sink.patch |
+| CPU output publication | Initial callsites in runtime-sink.patch |
+| Lookahead prefetch | Initial begin/end events and byte estimate |
+| Request start/end | Not yet wired |
+| KV-cache operations | Not yet wired |
+| Allocation/free/OOM | Not yet wired |
+| Transfer events | Nsight importer captures CUDA Runtime memcpy activities; direct sink callsites pending |
+| Individual CUDA kernels | Nsight importer captures kernel activities; direct sink callsites pending |
+| Fallback/degraded execution | Not yet wired |
 
-CUDA activity timestamps imported from Nsight remain in their original
-clock domain. Do not compare them directly with steady-clock event times
-without an explicit clock calibration.
+Passing the smoke tests does not prove that all requested runtime categories
+are captured. CI checks the C++ sink and that all patch layers apply to the
+pinned base; it does not build the full CUDA server or run inference.
+
+## Event and clock rules
+
+Events carry steady-clock timestamps and optional duration/request correlation.
+A zero request ID means correlation is unavailable; identity must never be
+synthesized. CUDA activity timestamps imported from Nsight remain in their
+original clock domain and must not be compared directly with steady-clock
+events without explicit clock calibration.
+
+The sink callback is designed to be non-blocking and thread-safe. The queue
+has a fixed capacity and reports drops. Runtime instrumentation must preserve
+the source engine's semantics and must not add blocking I/O to worker threads.
