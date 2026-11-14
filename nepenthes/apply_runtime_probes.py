@@ -229,6 +229,33 @@ def main() -> int:
         "KV cell reuse",
     )
 
+    # Generic backend buffer lifecycle covers ordinary CPU allocations as well as
+    # backend buffers. CUDA-specific probes below add device-level detail.
+    backend = "ggml/src/ggml-backend.cpp"
+    replace_once(
+        root, backend, '#include "ggml-backend-impl.h"\n',
+        '#include "ggml-backend-impl.h"\n#include "../../src/nepenthes_trace.hpp"\n',
+        "backend trace include",
+    )
+    replace_once(
+        root, backend,
+        '    return buft->iface.alloc_buffer(buft, size);',
+        '    nepenthes::ScopedEvent alloc_event(nepenthes::EventType::allocation, "backend.buffer.alloc", size, ggml_backend_buft_is_host(buft) ? 1 : 0);\n'
+        '    ggml_backend_buffer_t buffer = buft->iface.alloc_buffer(buft, size);\n'
+        '    if (buffer == nullptr) {\n'
+        '        nepenthes::emit(nepenthes::EventType::oom, "backend.buffer.alloc_oom", size, ggml_backend_buft_is_host(buft) ? 1 : 0, nepenthes::flag_failed);\n'
+        '    }\n'
+        '    return buffer;',
+        "generic backend buffer allocation",
+    )
+    replace_once(
+        root, backend,
+        '    if (buffer->iface.free_buffer != NULL) {\n',
+        '    nepenthes::emit(nepenthes::EventType::free_event, "backend.buffer.free", buffer->size, ggml_backend_buft_is_host(buffer->buft) ? 1 : 0);\n'
+        '    if (buffer->iface.free_buffer != NULL) {\n',
+        "generic backend buffer free",
+    )
+
     # CUDA allocations/frees, host-pinned fallback, transfer boundaries and op dispatch.
     cu = "ggml/src/ggml-cuda/ggml-cuda.cu"
     replace_once(
