@@ -219,7 +219,11 @@ diff --git a/src/llama-context.cpp b/src/llama-context.cpp
 diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 --- a/src/llama-moe-cache.cpp
 +++ b/src/llama-moe-cache.cpp
-@@ -3208,4 +3208,7 @@
+@@ -3204,8 +3204,11 @@
+     void la_loop() {
+         for (;;) {
+             int32_t tl;
+             idle_wait([&] { return (tl = la_job.load(std::memory_order_acquire)) != -1; });
              if (tl == -2) {
                  return;
              }
