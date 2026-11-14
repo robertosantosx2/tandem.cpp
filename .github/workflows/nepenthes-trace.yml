@@ -43,6 +43,8 @@ jobs:
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
           grep -n -B3 -A4 'n_expert_used(model.hparams.n_expert_used_max())' /tmp/llama.cpp/src/llama-moe-cache.cpp
           grep -n -B2 -A3 'std::thread worker;' /tmp/llama.cpp/src/llama-moe-cache.cpp
+          grep -n -B4 -A8 'void la_loop()' /tmp/llama.cpp/src/llama-moe-cache.cpp
+          grep -n -B2 -A6 'la_job.load' /tmp/llama.cpp/src/llama-moe-cache.cpp
           git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime-sink.patch"
           git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime-sink.patch"
           cat > /tmp/nepenthes-runtime-smoke.cpp <<'EOF'
