@@ -11,7 +11,7 @@ int main() {
     const std::string path = "nepenthes-jsonl-test.jsonl";
     std::remove(path.c_str());
     {
-        nepenthes::JsonlSink sink(path, "run\"line\nbreak");
+        nepenthes::JsonlSink sink(path, "run\\\"line\\nbreak");
         for (std::uint64_t i = 0; i < 256; ++i) {
             nepenthes::emit(nepenthes::EventType::kernel, "cuda.kernel", i, 4096);
         }
@@ -36,10 +36,14 @@ int main() {
     std::string line;
     std::size_t count = 0;
     while (std::getline(input, line)) {
-        assert(line.find("\"source\":\"tandem.cpp\"") != std::string::npos);
-        assert(line.find("\"run_id\":\"run\\\"line\\nbreak\"") != std::string::npos);
+        // Every record must occupy one physical line and end with its JSON brace.
+        // This catches a literal backslash+n being written instead of a newline.
+        assert(!line.empty());
+        assert(line.back() == '}');
+        assert(line.find("\\"source\\":\\"tandem.cpp\\"") != std::string::npos);
+        assert(line.find("\\"run_id\\":\\"run\\\\\\\"line\\\\nbreak\\"") != std::string::npos);
         if (count < 256) {
-            assert(line.find("\"event_kind\":\"kernel\"") != std::string::npos);
+            assert(line.find("\\"event_kind\\":\\"kernel\\"") != std::string::npos);
         }
         ++count;
     }
