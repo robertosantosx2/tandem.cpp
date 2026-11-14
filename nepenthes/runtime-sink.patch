@@ -210,23 +210,43 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +#include "nepenthes_jsonl_sink.hpp"
  
  #include "llama-impl.h"
-@@ -2047,2 +2048,3 @@
+@@ -1761,2 +1762,3 @@
      std::thread worker;
 +    std::unique_ptr<nepenthes::JsonlSink> nepenthes_sink;
      std::atomic<int32_t> job_layer{-1};  // layer to compute, -1 idle, -2 exit
-@@ -2525,1 +2527,5 @@
+@@ -2222,1 +2224,5 @@
              n_expert_used(model.hparams.n_expert_used_max()), layers(model.layers.size()) {
 +        if (const char * path = getenv("NEPENTHES_TRACE_JSONL"); path && *path) {
 +            const char * run = getenv("NEPENTHES_RUN_ID");
 +            nepenthes_sink = std::make_unique<nepenthes::JsonlSink>(path, run ? run : "tandem-moe");
 +        }
-@@ -3397,4 +3403,5 @@
+@@ -3092,4 +3098,5 @@
          for (auto & h : helpers) {
              h.join();
          }
 +        if (nepenthes_sink) nepenthes_sink->close();
          log_stats();
-@@ -3596,9 +3603,19 @@
+@@ -3208,4 +3215,7 @@
+             if (tl == -2) {
+                 return;
+             }
+             const int64_t t0 = ggml_time_us();
++            const std::uint64_t pf_start = nepenthes::now_ns();
++            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
++                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
+@@ -3275,3 +3285,11 @@
+             }
+             t_la_us += ggml_time_us() - t0;
++            std::uint64_t pf_bytes = 0;
++            for (const auto & f : fills) {
++                for (const ggml_tensor * w : lt.experts) pf_bytes += w->nb[2];
++            }
++            const std::uint64_t pf_end = nepenthes::now_ns();
++            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
++                static_cast<std::uint64_t>(tl), pf_bytes, nepenthes::phase_end, 0,
++                pf_end >= pf_start ? pf_end - pf_start : 0);
+             la_job.store(-1, std::memory_order_relaxed);
+@@ -3282,9 +3300,19 @@
      void worker_loop() {
          pin_self(0);
          for (;;) {
@@ -247,31 +267,11 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                    "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));
 +                compute_cpu(layers[il]);
 +            }
-@@ -3610,2 +3634,3 @@
+@@ -3302,2 +3330,3 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
-@@ -3517,4 +3542,7 @@
-             if (tl == -2) {
-                 return;
-             }
-             const int64_t t0 = ggml_time_us();
-+            const std::uint64_t pf_start = nepenthes::now_ns();
-+            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
-+                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
-@@ -3588,3 +3616,11 @@
-             }
-             t_la_us += ggml_time_us() - t0;
-+            std::uint64_t pf_bytes = 0;
-+            for (const auto & f : fills) {
-+                for (const ggml_tensor * w : lt.experts) pf_bytes += w->nb[2];
-+            }
-+            const std::uint64_t pf_end = nepenthes::now_ns();
-+            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
-+                static_cast<std::uint64_t>(tl), pf_bytes, nepenthes::phase_end, 0,
-+                pf_end >= pf_start ? pf_end - pf_start : 0);
-             la_job.store(-1, std::memory_order_relaxed);
-@@ -4108,6 +4143,9 @@
+@@ -3798,6 +3827,9 @@
      void post_cpu_out(layer & l) {
          memcpy(l.cpu_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
@@ -281,7 +281,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            static_cast<std::uint64_t>(&l - layers.data()),
 +            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
      }
-@@ -4115,6 +4153,9 @@
+@@ -3805,6 +3837,9 @@
      void post_pf_out(layer & l) {
          memcpy(pf_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
@@ -289,5 +289,5 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
          f[0] = f[0] + 1;
 +        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.prefill_publish",
 +            static_cast<std::uint64_t>(&l - layers.data()),
-+            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_end);
++            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
      }
