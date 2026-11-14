@@ -222,7 +222,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
          }
 +        if (nepenthes_sink) nepenthes_sink->close();
          log_stats();
-@@ -3596,14 +3603,31 @@
+@@ -3596,9 +3603,18 @@
      void worker_loop() {
          pin_self(0);
          for (;;) {
@@ -243,7 +243,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                    "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));
 +                compute_cpu(layers[il]);
 +            }
-@@ -3610,3 +3634,4 @@
+@@ -3610,2 +3634,3 @@
              job_layer.store(-1, std::memory_order_relaxed);
              job_done.store(true, std::memory_order_release);
 +            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.done", static_cast<std::uint64_t>(il));
@@ -255,7 +255,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            const std::uint64_t pf_start = nepenthes::now_ns();
 +            nepenthes::emit(nepenthes::EventType::prefetch, "moe.lookahead_prefetch",
 +                static_cast<std::uint64_t>(tl), 0, nepenthes::phase_begin);
-@@ -3588,4 +3616,11 @@
+@@ -3588,3 +3616,10 @@
              }
              t_la_us += ggml_time_us() - t0;
 +            std::uint64_t pf_bytes = 0;
@@ -267,7 +267,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +                static_cast<std::uint64_t>(tl), pf_bytes, nepenthes::phase_end, 0,
 +                pf_end >= pf_start ? pf_end - pf_start : 0);
              la_job.store(-1, std::memory_order_relaxed);
-@@ -4108,8 +4143,11 @@
+@@ -4108,6 +4143,9 @@
      void post_cpu_out(layer & l) {
          memcpy(l.cpu_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
@@ -277,7 +277,7 @@ diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
 +            static_cast<std::uint64_t>(&l - layers.data()),
 +            static_cast<std::uint64_t>(l.out.size() * sizeof(float)), nepenthes::phase_instant);
      }
-@@ -4115,8 +4153,11 @@
+@@ -4115,6 +4153,9 @@
      void post_pf_out(layer & l) {
          memcpy(pf_out->data, l.out.data(), l.out.size()*sizeof(float));
          std::atomic_thread_fence(std::memory_order_release);
