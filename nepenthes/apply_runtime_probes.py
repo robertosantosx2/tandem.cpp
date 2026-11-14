@@ -442,10 +442,28 @@ def main() -> int:
     replace_once(
         root, server,
         '                    const int id_task = task.id;\n',
-        '                    const int id_task = task.id;\n'
+        '                    const int id_task = task.id;\n',
+        "request task id",
+    )
+    replace_once(
+        root, server,
+        '                    if (slot->is_processing()) {\n'
+        '                        // if requested slot is unavailable, we defer this task for processing later\n'
+        '                        SRV_DBG("requested slot is unavailable, defer task, id_task = %d\\n", id_task);\n'
+        '                        queue_tasks.defer(std::move(task));\n'
+        '                        break;\n'
+        '                    }\n\n'
+        '                    if (task.is_parent()) {',
+        '                    if (slot->is_processing()) {\n'
+        '                        // if requested slot is unavailable, we defer this task for processing later\n'
+        '                        SRV_DBG("requested slot is unavailable, defer task, id_task = %d\\n", id_task);\n'
+        '                        queue_tasks.defer(std::move(task));\n'
+        '                        break;\n'
+        '                    }\n\n'
         '                    nepenthes::ensure_sink_from_env();\n'
-        '                    nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", id_task, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, id_task);\n',
-        "request start",
+        '                    nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", id_task, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, id_task);\n\n'
+        '                    if (task.is_parent()) {',
+        "request start after slot reservation",
     )
 
     print("NEPENTHES runtime probes applied successfully.")
