@@ -34,7 +34,7 @@ is counted. The process-lifetime sink closes its writer during shutdown.
 | Graph execution | Graph-compute duration; graph-level, not a kernel timing |
 | Synchronization | Context synchronization and MoE worker lifecycle events |
 | MoE cache | Existing hit/miss/eviction plus cell reuse |
-| KV cache | Allocation, teardown, clear, update duration, ubatch insertion, cell reuse and sequence-cell release |
+| KV cache | Allocation, teardown, clear, update duration, ubatch insertion, cell reuse/release, plus timed `seq_rm`, `seq_cp`, `seq_keep`, `seq_add` and `seq_div` operations with sequence/range metadata |
 | CPU workers | Job enqueue, worker idle wait, compute span, job completion, CPU/prefill output publication, and GPU-side host wait for CPU output |
 | Prefetch | Lookahead enqueue begin/end, estimated bytes, and backend-event wait |
 | Memory allocation/free | Generic backend CPU/GPU buffer alloc/free and OOM, plus CUDA device alloc, pool return/release and pinned-host allocation/free |
