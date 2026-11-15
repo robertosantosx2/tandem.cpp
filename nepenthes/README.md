@@ -54,8 +54,11 @@ explicit clock-domain calibration.
 
 ## Correlation and validation limits
 
-Request start/end carry the server task ID. Internal worker and CUDA events
-currently use \`request_id=0\`; no cross-thread request identity is fabricated.
+Request start/end and server routing preserve the raw server task ID in event
+values. The task ID is mapped to `request_id = task_id + 1`, because llama.cpp
+task IDs begin at zero while NEPENTHES reserves `request_id=0` for uncorrelated
+events. Internal worker and CUDA events currently use `request_id=0`; no
+cross-thread or multi-request batch identity is fabricated.
 The CPU worker wait is the worker's wait for a job, while the GPU-side wait and
 kernel activities are taken from the Nsight trace.
 
