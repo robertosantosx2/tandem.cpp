@@ -44,6 +44,12 @@ struct Event {
     const char * label = nullptr; // borrowed; sink consumes during callback
 };
 
+// Server task IDs start at zero, while request_id=0 means uncorrelated.
+// Preserve the raw task ID in event values and map valid IDs into [1, UINT64_MAX].
+inline std::uint64_t request_id_from_task_id(std::int64_t task_id) noexcept {
+    return task_id < 0 ? 0 : static_cast<std::uint64_t>(task_id) + 1;
+}
+
 using Sink = void (*)(const Event &) noexcept;
 
 inline std::atomic<Sink> & sink_slot() noexcept {
