@@ -27,6 +27,10 @@ static void blocking_collect(const nepenthes::Event &) noexcept {
 int main() {
     using namespace nepenthes;
 
+    assert(request_id_from_task_id(-1) == 0);
+    assert(request_id_from_task_id(0) == 1);
+    assert(request_id_from_task_id(41) == 42);
+
     emit(EventType::request_start, "disabled");
     assert(seen == 0);
 
