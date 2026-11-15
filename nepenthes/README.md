@@ -1,5 +1,7 @@
 # NEPENTHES instrumentation for tandem.cpp
 
+**Language:** [English version](README-EN.md) · [Versión en español](README.md)
+
 This directory contains the event contract, bounded JSONL sink, deterministic
 runtime probe applier and tests shared with the LEONES universal collector.
 
