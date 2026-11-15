@@ -511,7 +511,7 @@ def main() -> int:
         root, server,
         '    void send_final_response(server_slot & slot) {\n',
         '    void send_final_response(server_slot & slot) {\n'
-        '        nepenthes::emit(nepenthes::EventType::request_end, "server.request_end", slot.task->id, slot.id, nepenthes::phase_instant, slot.task->id);\n',
+        '        nepenthes::emit(nepenthes::EventType::request_end, "server.request_end", slot.task->id, slot.id, nepenthes::phase_instant, nepenthes::request_id_from_task_id(slot.task->id));\n',
         "request end",
     )
     replace_once(
@@ -536,7 +536,7 @@ def main() -> int:
         '                        break;\n'
         '                    }\n\n'
         '                    nepenthes::ensure_sink_from_env();\n'
-        '                    nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", id_task, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, id_task);\n\n'
+        '                    nepenthes::emit(nepenthes::EventType::request_start, "server.request_start", id_task, static_cast<std::uint64_t>(task.type), nepenthes::phase_instant, nepenthes::request_id_from_task_id(id_task));\n\n'
         '                    if (task.is_parent()) {',
         "request start after slot reservation",
     )
