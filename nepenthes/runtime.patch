@@ -141,7 +141,7 @@ index a2f68ed..0000000 100644
          n_empty_consecutive = 0;
  
          SLT_INF(slot, "processing task, is_child = %d\n", slot.task->is_child());
-+        nepenthes::emit(nepenthes::EventType::routing, "server.task_slot", (std::uint64_t) slot.task->id, (std::uint64_t) slot.id, nepenthes::phase_instant, (std::uint64_t) slot.task->id);
++        nepenthes::emit(nepenthes::EventType::routing, "server.task_slot", (std::uint64_t) slot.task->id, (std::uint64_t) slot.id, nepenthes::phase_instant, nepenthes::request_id_from_task_id(slot.task->id));
          spec_auto.reset_round();
          return true;
      }
