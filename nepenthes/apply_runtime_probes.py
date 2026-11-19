@@ -555,7 +555,6 @@ def main() -> int:
         '        l.pf_job  = true;\n'
         '        l.t_start = ggml_time_us();\n'
         '        job_done.store(false, std::memory_order_relaxed);\n'
-        '        job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
         '        job_layer.store(il, std::memory_order_release);',
         '        l.pf_job  = true;\n'
         '        l.t_start = ggml_time_us();\n'
