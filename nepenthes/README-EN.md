@@ -26,6 +26,7 @@ The sink is created lazily at the first graph-compute entry. Capture is disabled
 | Area | Instrumentation |
 |---|---|
 | Request lifecycle | Server request start/end with task ID as `request_id` |
+| Batch correlation | Exact rendered decode-slice token; membership event per distinct request/slot; token copied to graph and explicitly captured async jobs; shared work keeps `request_id=0` |
 | Graph execution | Graph-compute duration; graph-level, not kernel timing |
 | Synchronization | Context synchronization and MoE worker lifecycle events |
 | MoE cache | Existing hit/miss/eviction plus cell reuse |
@@ -42,8 +43,22 @@ CUDA call-site spans around asynchronous operations describe host-side submissio
 
 ## Correlation and validation limits
 
-Request start/end carry the server task ID. Internal worker and CUDA events currently use `request_id=0`; no cross-thread request identity is fabricated. The CPU worker wait is the worker's wait for a job, while GPU-side waits and kernel activities are taken from the Nsight trace.
+Request start/end and server routing preserve the raw server task ID in event values. The task ID maps to `request_id = task_id + 1`, because llama.cpp task IDs start at zero while NEPENTHES reserves `request_id=0` for uncorrelated events.
 
-CI verifies event and JSONL sink tests, applies `tandem.patch` and `runtime.patch` to the pinned llama.cpp revision, runs the deterministic probe applier, checks whitespace, and builds the CPU `llama-server` target. It does not compile the `.cu` translation unit with nvcc, execute inference, or prove every event category appears in one capture. A CUDA-enabled build and reproducible runtime capture remain required before the complete observability phase can be accepted.
+The host-only batch-correlation path assigns one opaque `correlation_token` to each exact rendered decode slice. A `server.batch_member` instant event is emitted for each distinct live slot/task represented in that slice; all membership records share the batch token while retaining their individual nonzero request IDs. Graph and explicitly captured asynchronous job events carry the same token with `request_id=0`. Token-bearing records declare `attribution_level=exact` and `clock_domain=steady_clock`: **exact means exact membership in that batch, not attribution to one request**.
+
+The token is copied at publication for the single CPU `job_layer`, lookahead `la_job` and fetch-helper `fh_job` queues. The worker idle wait remains uncorrelated. The vector-draining `as_loop`, device-doorbell `db_loop` and background hot-file thread remain uncorrelated because they lack a one-batch/one-job ownership invariant. Unknown or incomplete slot membership disables the token for that decode slice. No temporal-proximity attribution is used.
+
+This is host/batch correlation only. It does not yet link Nsight/CUPTI GPU activities to the batch token, and it does not assign a request ID to shared worker or kernel work. NVTX/CUPTI token propagation and many-to-many activity import remain separate gates. The CPU worker wait is the worker's wait for a job, while GPU-side waits and kernel activities are taken from the Nsight trace.
+
+CI verifies the C++17 hook/sink tests, nested and cross-thread batch-token
+scopes, final `sink_summary`, the shutdown barrier in the actual applied
+runtime header, and the generated JSONL through the LEONES shared importer.
+It applies `tandem.patch` and `runtime.patch` to the pinned llama.cpp revision,
+runs the deterministic probe applier, checks whitespace, and builds CPU and
+CUDA `llama-server` targets (CUDA SM86). CI does not execute inference, prove
+that every probe category appears in one capture, link GPU activities to batch
+tokens, or measure runtime overhead. A reproducible paired physical capture
+and C07/C08 remain required before engine acceptance.
 
 The sink callback must remain non-blocking and thread-safe. Instrumentation must preserve engine semantics and must not add blocking file I/O to worker threads.

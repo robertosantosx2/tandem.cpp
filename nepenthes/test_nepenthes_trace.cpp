@@ -8,6 +8,8 @@
 static std::uint64_t seen = 0;
 static std::uint64_t last_duration = 0;
 static std::uint16_t last_flags = 0;
+static std::uint64_t last_correlation_token = 0;
+static std::atomic<std::uint64_t> threaded_correlation_token{0};
 static std::atomic<bool> callback_entered{false};
 static std::atomic<bool> release_callback{false};
 
@@ -15,6 +17,11 @@ static void collect(const nepenthes::Event & event) noexcept {
     ++seen;
     last_duration = event.duration_ns;
     last_flags = event.flags;
+    last_correlation_token = event.correlation_token;
+}
+
+static void collect_thread_token(const nepenthes::Event & event) noexcept {
+    threaded_correlation_token.store(event.correlation_token, std::memory_order_release);
 }
 
 static void blocking_collect(const nepenthes::Event &) noexcept {
@@ -46,9 +53,38 @@ int main() {
     assert(last_flags == phase_end);
     (void) last_duration;
 
+    const std::uint64_t batch_token = next_correlation_token();
+    assert(batch_token != 0);
+    {
+        BatchScope batch(batch_token);
+        assert(current_batch_token() == batch_token);
+        emit(EventType::cpu_work, "moe.cpu_worker.compute", 5, 0);
+        assert(last_correlation_token == batch_token);
+        {
+            ScopedEvent span(EventType::cpu_work, "scoped-batch-span");
+        }
+        assert(last_correlation_token == batch_token);
+        {
+            BatchScope nested(batch_token + 1);
+            assert(current_batch_token() == batch_token + 1);
+        }
+        assert(current_batch_token() == batch_token);
+    }
+    assert(current_batch_token() == 0);
+    emit(EventType::cpu_work, "uncorrelated", 0, 0);
+    assert(last_correlation_token == 0);
+
+    set_sink(&collect_thread_token);
+    std::thread token_worker([batch_token] {
+        BatchScope batch(batch_token);
+        emit(EventType::cpu_work, "worker-thread", 0, 0);
+    });
+    token_worker.join();
+    assert(threaded_correlation_token.load(std::memory_order_acquire) == batch_token);
+
     set_sink(nullptr);
     emit(EventType::request_end, "disabled");
-    assert(seen == 3);
+    assert(seen == 7);
 
     // Shutdown must wait for a callback that has already entered the sink.
     set_sink(&blocking_collect);

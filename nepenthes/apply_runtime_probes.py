@@ -60,6 +60,75 @@ def main() -> int:
     )
 
     moe = "src/llama-moe-cache.cpp"
+    replace_once(
+        root, moe,
+        '    std::atomic<int32_t> job_layer{-1};  // layer to compute, -1 idle, -2 exit\n',
+        '    std::atomic<int32_t> job_layer{-1};  // layer to compute, -1 idle, -2 exit\n'
+        '    std::atomic<std::uint64_t> job_batch_token{0};\n',
+        "CPU worker batch token",
+    )
+    replace_once(
+        root, moe,
+        '    std::atomic<int32_t> la_job{-1};        // target layer of the posted job, -1 none, -2 exit\n',
+        '    std::atomic<int32_t> la_job{-1};        // target layer of the posted job, -1 none, -2 exit\n'
+        '    std::atomic<std::uint64_t> la_batch_token{0};\n',
+        "lookahead batch token",
+    )
+    replace_once(
+        root, moe,
+        '    std::atomic<int>  fh_job{0};\n',
+        '    std::atomic<int>  fh_job{0};\n'
+        '    std::atomic<std::uint64_t> fh_batch_token{0};\n',
+        "fetch helper batch token",
+    )
+    replace_once(
+        root, moe,
+        '                la_job.store(tl, std::memory_order_release);\n',
+        '                la_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
+        '                la_job.store(tl, std::memory_order_release);\n',
+        "lookahead batch token publication (16-space site)",
+    )
+    replace_once(
+        root, moe,
+        '\n            la_job.store(tl, std::memory_order_release);\n',
+        '\n            la_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
+        '            la_job.store(tl, std::memory_order_release);\n',
+        "lookahead batch token publication (12-space site)",
+    )
+    replace_once(
+        root, moe,
+        '        fh_job.store(1, std::memory_order_release);\n',
+        '        fh_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
+        '        fh_job.store(1, std::memory_order_release);\n',
+        "fetch helper batch token publication",
+    )
+    replace_once(
+        root, moe,
+        '            if (tl == -2) {\n'
+        '                return;\n'
+        '            }\n'
+        '            const int64_t t0 = ggml_time_us();\n',
+        '            if (tl == -2) {\n'
+        '                return;\n'
+        '            }\n'
+        '            nepenthes::BatchScope lookahead_batch_scope(la_batch_token.load(std::memory_order_acquire));\n'
+        '            const int64_t t0 = ggml_time_us();\n',
+        "lookahead worker batch scope",
+    )
+    replace_once(
+        root, moe,
+        '            if (j < 0) {\n'
+        '                return;\n'
+        '            }\n'
+        '            const int64_t t0 = ggml_time_us();\n',
+        '            if (j < 0) {\n'
+        '                return;\n'
+        '            }\n'
+        '            nepenthes::BatchScope fetch_batch_scope(fh_batch_token.load(std::memory_order_acquire));\n'
+        '            const int64_t t0 = ggml_time_us();\n',
+        "fetch helper batch scope",
+    )
+
     # Measure lookahead enqueue and the later backend-event wait separately.
     replace_once(
         root, moe,
@@ -117,6 +186,7 @@ def main() -> int:
         root, moe,
         '            compute_cpu(layers[il]);\n'
         '            if (layers[il].pf_job) {',
+        '            nepenthes::BatchScope job_batch_scope(job_batch_token.load(std::memory_order_acquire));\n'
         '            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.start", static_cast<std::uint64_t>(il));\n'
         '            {\n'
         '                nepenthes::ScopedEvent compute_event(nepenthes::EventType::cpu_work, "moe.cpu_worker.compute", static_cast<std::uint64_t>(il));\n'
@@ -464,22 +534,33 @@ def main() -> int:
     )
 
     # Worker job publication and the GPU-side host wait for CPU output.
-    replace_all(
+    replace_once(
         root, moe,
-        '            job_layer.store(il, std::memory_order_release);\n',
+        '                job_layer.store(il, std::memory_order_release);\n',
+        '                job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
+        '                job_layer.store(il, std::memory_order_release);\n'
+        '                nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
+        "CPU worker job enqueue (16-space site)",
+    )
+    replace_once(
+        root, moe,
+        '\n            job_layer.store(il, std::memory_order_release);\n',
+        '\n            job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
         '            job_layer.store(il, std::memory_order_release);\n'
         '            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
-        2, "CPU worker job enqueue",
+        "CPU worker job enqueue (12-space site)",
     )
     replace_once(
         root, moe,
         '        l.pf_job  = true;\n'
         '        l.t_start = ggml_time_us();\n'
         '        job_done.store(false, std::memory_order_relaxed);\n'
+        '        job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
         '        job_layer.store(il, std::memory_order_release);',
         '        l.pf_job  = true;\n'
         '        l.t_start = ggml_time_us();\n'
         '        job_done.store(false, std::memory_order_relaxed);\n'
+        '        job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
         '        job_layer.store(il, std::memory_order_release);\n'
         '        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));',
         "CPU prefetch worker job enqueue",
@@ -498,9 +579,69 @@ def main() -> int:
         "GPU consumer wait for CPU output",
     )
 
-    # Request lifecycle IDs at the server boundary; lower-level async worker events
-    # deliberately keep request_id=0 until a safe cross-thread propagation path exists.
+    # Request IDs remain server-owned. A validated batch token is copied explicitly
+    # into the CPU worker/lookahead/fetch jobs; ambiguous as/db work stays uncorrelated.
     server = "tools/server/server-context.cpp"
+    replace_once(
+        root, server,
+        '    bool decode(int32_t & n_batch, int32_t off) {\n'
+        '        SRV_DBG("n_batch (effective) = %d, off = %d\\n", n_batch, off);\n',
+        '    bool decode(int32_t & n_batch, int32_t off) {\n'
+        '        std::uint64_t nepenthes_batch_token = nepenthes::next_correlation_token();\n'
+        '        bool nepenthes_batch_membership_complete = true;\n'
+        '        const int32_t nepenthes_batch_end = off + static_cast<int32_t>(batch.view.size());\n'
+        '        int32_t nepenthes_batch_members = 0;\n'
+        '        for (int32_t i = off; i < nepenthes_batch_end; ++i) {\n'
+        '            const int32_t slot_id = batch.tokens[i].id_slot;\n'
+        '            server_slot * member = get_slot_by_id(slot_id);\n'
+        '            if (member == nullptr || member->id != slot_id || !member->task || !member->is_processing() ||\n'
+        '                nepenthes::request_id_from_task_id(member->task->id) == 0) {\n'
+        '                nepenthes_batch_membership_complete = false;\n'
+        '                break;\n'
+        '            }\n'
+        '        }\n'
+        '        if (nepenthes_batch_membership_complete) {\n'
+        '            for (auto & member : slots) {\n'
+        '                bool present = false;\n'
+        '                for (int32_t i = off; i < nepenthes_batch_end; ++i) {\n'
+        '                    if (batch.tokens[i].id_slot == member.id) { present = true; break; }\n'
+        '                }\n'
+        '                if (!present) continue;\n'
+        '                ++nepenthes_batch_members;\n'
+        '                if (!member.task || !member.is_processing() ||\n'
+        '                    nepenthes::request_id_from_task_id(member.task->id) == 0) {\n'
+        '                    nepenthes_batch_membership_complete = false;\n'
+        '                    break;\n'
+        '                }\n'
+        '            }\n'
+        '        }\n'
+        '        if (nepenthes_batch_members == 0) nepenthes_batch_membership_complete = false;\n'
+        '        if (!nepenthes_batch_membership_complete) {\n'
+        '            nepenthes_batch_token = 0;\n'
+        '        } else {\n'
+        '            for (auto & member : slots) {\n'
+        '                bool present = false;\n'
+        '                for (int32_t i = off; i < nepenthes_batch_end; ++i) {\n'
+        '                    if (batch.tokens[i].id_slot == member.id) { present = true; break; }\n'
+        '                }\n'
+        '                if (!present) continue;\n'
+        '                nepenthes::emit(nepenthes::EventType::routing, "server.batch_member",\n'
+        '                    static_cast<std::uint64_t>(member.id), static_cast<std::uint64_t>(member.task->id),\n'
+        '                    nepenthes::phase_instant, nepenthes::request_id_from_task_id(member.task->id), 0, nepenthes_batch_token);\n'
+        '            }\n'
+        '        }\n'
+        '        SRV_DBG("n_batch (effective) = %d, off = %d\\n", n_batch, off);\n',
+        "server batch membership",
+    )
+    replace_once(
+        root, server,
+        '        queue_tasks.yield_to_queue([&]() {\n'
+        '            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());',
+        '        queue_tasks.yield_to_queue([&]() {\n'
+        '            nepenthes::BatchScope batch_scope(nepenthes_batch_token);\n'
+        '            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());',
+        "server batch scope",
+    )
     replace_once(
         root, server,
         '#include "../../src/nepenthes_trace.hpp"\n',
@@ -543,7 +684,7 @@ def main() -> int:
 
     print("NEPENTHES runtime probes applied successfully.")
     print("Note: CUDA kernel timings and memcpy activities are also captured by the LEONES Nsight SQLite importer.")
-    print("Note: request_id is populated at the server boundary; internal worker/CUDA events remain uncorrelated (0).")
+    print("Note: batch tokens correlate only explicit rendered-batch membership and captured async jobs; request_id remains 0 for shared worker work.")
     return 0
 
 
