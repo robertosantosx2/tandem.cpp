@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/src/nepenthes_trace.hpp
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,196 @@
 +#pragma once
 +
 +// NEPENTHES observability hook for tandem.cpp / llama.cpp.
@@ -43,6 +43,7 @@ index 0000000..0000000
 +    std::uint64_t monotonic_ns = 0;
 +    std::uint64_t duration_ns = 0;
 +    std::uint64_t request_id = 0; // zero means not correlated
++    std::uint64_t correlation_token = 0; // exact batch/job identity, not necessarily one request
 +    std::uint64_t value0 = 0;
 +    std::uint64_t value1 = 0;
 +    EventType type = EventType::error;
@@ -68,6 +69,43 @@ index 0000000..0000000
 +    return count;
 +}
 +
++inline std::atomic<std::uint64_t> & correlation_sequence() noexcept {
++    static std::atomic<std::uint64_t> sequence{1};
++    return sequence;
++}
++
++inline std::uint64_t next_correlation_token() noexcept {
++    std::uint64_t token = correlation_sequence().fetch_add(1, std::memory_order_relaxed);
++    if (token == 0) {
++        token = correlation_sequence().fetch_add(1, std::memory_order_relaxed);
++    }
++    return token;
++}
++
++inline std::uint64_t & current_batch_token_slot() noexcept {
++    static thread_local std::uint64_t token = 0;
++    return token;
++}
++
++inline std::uint64_t current_batch_token() noexcept {
++    return current_batch_token_slot();
++}
++
++class BatchScope {
++public:
++    explicit BatchScope(std::uint64_t token) noexcept
++        : previous_(current_batch_token_slot()) {
++        current_batch_token_slot() = token;
++    }
++    BatchScope(const BatchScope &) = delete;
++    BatchScope & operator=(const BatchScope &) = delete;
++    ~BatchScope() noexcept {
++        current_batch_token_slot() = previous_;
++    }
++private:
++    std::uint64_t previous_;
++};
++
 +inline std::uint64_t now_ns() noexcept {
 +    return static_cast<std::uint64_t>(
 +        std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -86,17 +124,15 @@ index 0000000..0000000
 +    }
 +}
 +
-+inline void emit(EventType type, const char * label = nullptr,
-+                 std::uint64_t value0 = 0, std::uint64_t value1 = 0,
-+                 std::uint16_t flags = phase_instant,
-+                 std::uint64_t request_id = 0,
-+                 std::uint64_t duration_ns = 0) noexcept {
++inline void emit_with_token(EventType type, const char * label,
++                             std::uint64_t value0, std::uint64_t value1,
++                             std::uint16_t flags, std::uint64_t request_id,
++                             std::uint64_t duration_ns,
++                             std::uint64_t correlation_token) noexcept {
 +    const Sink sink = sink_slot().load(std::memory_order_acquire);
 +    if (sink == nullptr) return;
 +
 +    active_emitters().fetch_add(1, std::memory_order_acq_rel);
-+    // An emitter can have loaded the old callback just before shutdown.
-+    // Recheck after joining the in-flight set so disable() cannot race it.
 +    if (sink_slot().load(std::memory_order_acquire) != sink) {
 +        active_emitters().fetch_sub(1, std::memory_order_release);
 +        return;
@@ -106,6 +142,7 @@ index 0000000..0000000
 +    event.monotonic_ns = now_ns();
 +    event.duration_ns = duration_ns;
 +    event.request_id = request_id;
++    event.correlation_token = correlation_token;
 +    event.value0 = value0;
 +    event.value1 = value1;
 +    event.type = type;
@@ -115,14 +152,31 @@ index 0000000..0000000
 +    active_emitters().fetch_sub(1, std::memory_order_release);
 +}
 +
++inline void emit(EventType type, const char * label = nullptr,
++                 std::uint64_t value0 = 0, std::uint64_t value1 = 0,
++                 std::uint16_t flags = phase_instant,
++                 std::uint64_t request_id = 0,
++                 std::uint64_t duration_ns = 0,
++                 std::uint64_t correlation_token = 0) noexcept {
++    if (correlation_token == 0) {
++        correlation_token = current_batch_token();
++    }
++    emit_with_token(type, label, value0, value1, flags, request_id,
++                    duration_ns, correlation_token);
++}
++
 +class ScopedEvent {
 +public:
 +    ScopedEvent(EventType type, const char * label,
 +                std::uint64_t value0 = 0, std::uint64_t value1 = 0,
-+                std::uint64_t request_id = 0) noexcept
++                std::uint64_t request_id = 0,
++                std::uint64_t correlation_token = 0) noexcept
 +        : type_(type), label_(label), value0_(value0), value1_(value1),
-+          request_id_(request_id), start_ns_(now_ns()) {
-+        emit(type_, label_, value0_, value1_, phase_begin, request_id_);
++          request_id_(request_id),
++          correlation_token_(correlation_token != 0 ? correlation_token : current_batch_token()),
++          start_ns_(now_ns()) {
++        emit_with_token(type_, label_, value0_, value1_, phase_begin, request_id_, 0,
++                        correlation_token_);
 +    }
 +
 +    ScopedEvent(const ScopedEvent &) = delete;
@@ -130,8 +184,9 @@ index 0000000..0000000
 +
 +    ~ScopedEvent() noexcept {
 +        const std::uint64_t end_ns = now_ns();
-+        emit(type_, label_, value0_, value1_, phase_end, request_id_,
-+             end_ns >= start_ns_ ? end_ns - start_ns_ : 0);
++        emit_with_token(type_, label_, value0_, value1_, phase_end, request_id_,
++                        end_ns >= start_ns_ ? end_ns - start_ns_ : 0,
++                        correlation_token_);
 +    }
 +
 +private:
@@ -140,6 +195,7 @@ index 0000000..0000000
 +    std::uint64_t value0_;
 +    std::uint64_t value1_;
 +    std::uint64_t request_id_;
++    std::uint64_t correlation_token_;
 +    std::uint64_t start_ns_;
 +};
 +

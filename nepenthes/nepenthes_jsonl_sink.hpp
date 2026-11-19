@@ -196,7 +196,12 @@ private:
                     << "\",\"value0\":" << event.value0
                     << ",\"value1\":" << event.value1
                     << ",\"duration_ns\":" << event.duration_ns
-                    << ",\"flags\":" << event.flags << "}\n";
+                    << ",\"flags\":" << event.flags;
+            if (event.correlation_token != 0) {
+                output_ << ",\"correlation_token\":" << event.correlation_token
+                        << ",\"attribution_level\":\"exact\",\"clock_domain\":\"steady_clock\"";
+            }
+            output_ << "}\n";
             if (!output_) {
                 write_errors_.fetch_add(1, std::memory_order_relaxed);
             } else {
