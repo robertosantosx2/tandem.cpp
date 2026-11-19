@@ -59,6 +59,7 @@ jobs:
           git -C /tmp/llama.cpp diff --check
           cmake -S /tmp/llama.cpp -B /tmp/llama-build \
             -DGGML_CUDA=OFF -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
             -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build /tmp/llama-build --target llama-server -j2
@@ -104,7 +105,8 @@ jobs:
           ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
           cmake -S /tmp/llama.cpp -B /tmp/llama-cuda-build \
             -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
-            -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
             -DCMAKE_BUILD_TYPE=Release
