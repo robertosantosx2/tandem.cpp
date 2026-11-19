@@ -171,7 +171,7 @@ private:
                 << events_drained_.load(std::memory_order_relaxed)
                 << ",\"dropped_events\":" << dropped_.load(std::memory_order_relaxed)
                 << ",\"write_errors\":" << write_errors_.load(std::memory_order_relaxed)
-                << "}\\n";
+                << "}\n";
         if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
     }
 
