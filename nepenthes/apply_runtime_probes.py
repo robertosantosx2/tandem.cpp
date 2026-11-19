@@ -7,6 +7,7 @@ Every edit is anchored to an exact source fragment; source drift fails closed.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -28,6 +29,24 @@ def replace_all(root: Path, rel: str, old: str, new: str, expected: int, label: 
     if count != expected:
         raise RuntimeError(f"{label}: expected {expected} anchors in {rel}, found {count}")
     path.write_text(source.replace(old, new), encoding="utf-8")
+
+
+def replace_all_indented(
+    root: Path, rel: str, statement: str, replacement_lines: list[str],
+    expected: int, label: str,
+) -> None:
+    path = root / rel
+    source = path.read_text(encoding="utf-8")
+    pattern = re.compile(r"(?m)^([ \\t]*)" + re.escape(statement) + r"$")
+    matches = list(pattern.finditer(source))
+    if len(matches) != expected:
+        raise RuntimeError(f"{label}: expected {expected} line anchors in {rel}, found {len(matches)}")
+
+    def replacement(match: re.Match[str]) -> str:
+        indent = match.group(1)
+        return "\\n".join(indent + line for line in replacement_lines)
+
+    path.write_text(pattern.sub(replacement, source), encoding="utf-8")
 
 
 def main() -> int:
@@ -534,35 +553,16 @@ def main() -> int:
     )
 
     # Worker job publication and the GPU-side host wait for CPU output.
-    replace_once(
+    replace_all_indented(
         root, moe,
-        '                job_layer.store(il, std::memory_order_release);\n',
-        '                job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
-        '                job_layer.store(il, std::memory_order_release);\n'
-        '                nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
-        "CPU worker job enqueue (16-space site)",
-    )
-    replace_once(
-        root, moe,
-        '\n            job_layer.store(il, std::memory_order_release);\n',
-        '\n            job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
-        '            job_layer.store(il, std::memory_order_release);\n'
-        '            nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));\n',
-        "CPU worker job enqueue (12-space site)",
-    )
-    replace_once(
-        root, moe,
-        '        l.pf_job  = true;\n'
-        '        l.t_start = ggml_time_us();\n'
-        '        job_done.store(false, std::memory_order_relaxed);\n'
-        '        job_layer.store(il, std::memory_order_release);',
-        '        l.pf_job  = true;\n'
-        '        l.t_start = ggml_time_us();\n'
-        '        job_done.store(false, std::memory_order_relaxed);\n'
-        '        job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);\n'
-        '        job_layer.store(il, std::memory_order_release);\n'
-        '        nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));',
-        "CPU prefetch worker job enqueue",
+        "job_layer.store(il, std::memory_order_release);",
+        [
+            "job_batch_token.store(nepenthes::current_batch_token(), std::memory_order_relaxed);",
+            "job_layer.store(il, std::memory_order_release);",
+            'nepenthes::emit(nepenthes::EventType::sync, "moe.cpu_worker.enqueue", static_cast<std::uint64_t>(il));',
+        ],
+        3,
+        "CPU worker job enqueue and batch token publication",
     )
     replace_once(
         root, moe,
