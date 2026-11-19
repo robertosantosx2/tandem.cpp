@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/src/nepenthes_trace.hpp
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,84 @@
 +#pragma once
 +
 +// NEPENTHES low-overhead trace hook. C++17, no heap allocation on emit.
@@ -29,6 +29,11 @@ index 0000000..0000000
 +    std::uint16_t flags = phase_instant;
 +    const char * label = nullptr; // borrowed; consume synchronously
 +};
++// Server task IDs start at zero, while request_id=0 means uncorrelated.
++// Preserve the raw task ID in event values and map valid IDs into [1, UINT64_MAX].
++inline std::uint64_t request_id_from_task_id(std::int64_t task_id) noexcept {
++    return task_id < 0 ? 0 : static_cast<std::uint64_t>(task_id) + 1;
++}
 +using Sink = void (*)(const Event &) noexcept;
 +inline std::atomic<Sink> & sink_slot() noexcept {
 +    static std::atomic<Sink> slot{nullptr};
@@ -141,7 +146,7 @@ index a2f68ed..0000000 100644
          n_empty_consecutive = 0;
  
          SLT_INF(slot, "processing task, is_child = %d\n", slot.task->is_child());
-+        nepenthes::emit(nepenthes::EventType::routing, "server.task_slot", (std::uint64_t) slot.task->id, (std::uint64_t) slot.id, nepenthes::phase_instant, (std::uint64_t) slot.task->id);
++        nepenthes::emit(nepenthes::EventType::routing, "server.task_slot", (std::uint64_t) slot.task->id, (std::uint64_t) slot.id, nepenthes::phase_instant, nepenthes::request_id_from_task_id(slot.task->id));
          spec_auto.reset_round();
          return true;
      }
