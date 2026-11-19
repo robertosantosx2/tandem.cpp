@@ -592,6 +592,7 @@ def main() -> int:
         '        int32_t nepenthes_batch_members = 0;\n'
         '        for (int32_t i = off; i < nepenthes_batch_end; ++i) {\n'
         '            const int32_t slot_id = batch.tokens[i].id_slot;\n'
+        '            if (slot_id < 0) { nepenthes_batch_membership_complete = false; break; }\n'
         '            server_slot * member = get_slot_by_id(slot_id);\n'
         '            if (member == nullptr || member->id != slot_id || !member->task || !member->is_processing() ||\n'
         '                nepenthes::request_id_from_task_id(member->task->id) == 0) {\n'
