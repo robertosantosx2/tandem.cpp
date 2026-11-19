@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -34,21 +35,33 @@ int main() {
     std::ifstream input(path);
     assert(input.good());
     std::string line;
+    std::string summary_line;
     std::size_t count = 0;
     while (std::getline(input, line)) {
-        // Every record must occupy one physical line and end with its JSON brace.
-        // This catches a literal backslash+n being written instead of a newline.
         assert(!line.empty());
         assert(line.back() == '}');
         assert(line.find("\"source\":\"tandem.cpp\"") != std::string::npos);
         assert(line.find("\"run_id\":\"run\\\"line\\nbreak\"") != std::string::npos);
-        if (count < 256) {
-            assert(line.find("\"event_kind\":\"kernel\"") != std::string::npos);
+        if (line.find("\"event_kind\":\"sink_summary\"") != std::string::npos) {
+            assert(summary_line.empty());
+            assert(count == 4256);
+            summary_line = line;
+        } else {
+            assert(summary_line.empty()); // the summary must be final
+            if (count < 256) {
+                assert(line.find("\"event_kind\":\"kernel\"") != std::string::npos);
+            }
         }
         ++count;
     }
     input.close();
-    std::remove(path.c_str());
-    assert(count == 4256);
+    assert(count == 4257); // 4,256 events plus exactly one final summary
+    assert(!summary_line.empty());
+    assert(summary_line.find("\"events_drained\":4256") != std::string::npos);
+    assert(summary_line.find("\"dropped_events\":0") != std::string::npos);
+    assert(summary_line.find("\"write_errors\":0") != std::string::npos);
+    if (std::getenv("NEPENTHES_KEEP_TEST_TRACE") == nullptr) {
+        std::remove(path.c_str());
+    }
     return 0;
 }
