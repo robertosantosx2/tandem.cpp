@@ -1,0 +1,96 @@
+name: NEPENTHES trace hook
+
+on:
+  pull_request:
+    paths:
+      - "nepenthes/**"
+      - "tandem.patch"
+      - "build.sh"
+      - ".github/workflows/nepenthes-trace.yml"
+
+concurrency:
+  group: nepenthes-trace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trace-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile C++17 trace smoke test
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+            -Inepenthes nepenthes/test_nepenthes_trace.cpp \
+            -o /tmp/nepenthes-trace-test
+      - name: Run trace smoke test
+        run: /tmp/nepenthes-trace-test
+      - name: Compile and run JSONL sink test
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+            -Inepenthes nepenthes/test_nepenthes_jsonl_sink.cpp \
+            -o /tmp/nepenthes-jsonl-test
+          /tmp/nepenthes-jsonl-test
+      - name: Verify runtime patches apply to pinned llama.cpp base
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          git -C /tmp/llama.cpp fetch --depth=1 origin f5222f25c18da062ab2b8a2dbbfbf4feae398566
+          git -C /tmp/llama.cpp checkout -q FETCH_HEAD
+          git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/tandem.patch"
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
+          git -C /tmp/llama.cpp apply --check "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          python3 -m py_compile "$GITHUB_WORKSPACE/nepenthes/apply_runtime_probes.py"
+          python3 "$GITHUB_WORKSPACE/nepenthes/apply_runtime_probes.py" /tmp/llama.cpp
+          git -C /tmp/llama.cpp diff --check
+          cmake -S /tmp/llama.cpp -B /tmp/llama-build \
+            -DGGML_CUDA=OFF -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/llama-build --target llama-server -j2
+          cat > /tmp/nepenthes-runtime-smoke.cpp <<'EOF'
+          #include "nepenthes_jsonl_sink.hpp"
+          int main() {
+              nepenthes::JsonlSink sink("/tmp/nepenthes-runtime-smoke.jsonl", "ci");
+              nepenthes::emit(nepenthes::EventType::cache_hit, "runtime-header", 1, 2);
+              sink.close();
+              return 0;
+          }
+          EOF
+          g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+            -I/tmp/llama.cpp/src /tmp/nepenthes-runtime-smoke.cpp \
+            -o /tmp/nepenthes-runtime-trace-test
+          /tmp/nepenthes-runtime-trace-test
+
+  cuda-compile:
+    runs-on: ubuntu-24.04
+    container:
+      image: nvidia/cuda:12.9.1-devel-ubuntu24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential cmake git python3 libcurl4-openssl-dev pkg-config
+      - name: Apply Tandem and NEPENTHES runtime probes
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/ggml-org/llama.cpp.git /tmp/llama.cpp
+          git -C /tmp/llama.cpp fetch --depth=1 origin f5222f25c18da062ab2b8a2dbbfbf4feae398566
+          git -C /tmp/llama.cpp checkout -q FETCH_HEAD
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/tandem.patch"
+          git -C /tmp/llama.cpp apply "$GITHUB_WORKSPACE/nepenthes/runtime.patch"
+          python3 "$GITHUB_WORKSPACE/nepenthes/apply_runtime_probes.py" /tmp/llama.cpp
+          git -C /tmp/llama.cpp diff --check
+      - name: Compile CUDA-enabled llama-server
+        run: |
+          # CUDA devel images ship the driver stub as libcuda.so; provide the
+          # SONAME lookup expected by dependent CUDA shared libraries at link time.
+          test -f /usr/local/cuda/lib64/stubs/libcuda.so
+          ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+          cmake -S /tmp/llama.cpp -B /tmp/llama-cuda-build \
+            -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86 \
+            -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/llama-cuda-build --target llama-server -j2

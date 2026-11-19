@@ -1,0 +1,147 @@
+diff --git a/src/nepenthes_trace.hpp b/src/nepenthes_trace.hpp
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/src/nepenthes_trace.hpp
+@@ -0,0 +1,79 @@
++#pragma once
++
++// NEPENTHES low-overhead trace hook. C++17, no heap allocation on emit.
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++
++namespace nepenthes {
++enum class EventType : std::uint8_t {
++    request_start, request_end, model_load, model_unload, routing,
++    cache_hit, cache_miss, eviction, prefetch, kv_cache,
++    allocation, free_event, transfer, kernel, sync, cpu_work, stall, oom,
++    fallback, error,
++};
++enum EventFlags : std::uint16_t {
++    phase_instant = 0, phase_begin = 1u << 0, phase_end = 1u << 1,
++    flag_failed = 1u << 2, flag_host = 1u << 3, flag_device = 1u << 4,
++};
++struct Event {
++    std::uint64_t monotonic_ns = 0, duration_ns = 0, request_id = 0;
++    std::uint64_t value0 = 0, value1 = 0;
++    EventType type = EventType::error;
++    std::uint16_t flags = phase_instant;
++    const char * label = nullptr; // borrowed; consume synchronously
++};
++using Sink = void (*)(const Event &) noexcept;
++inline std::atomic<Sink> & sink_slot() noexcept {
++    static std::atomic<Sink> slot{nullptr};
++    return slot;
++}
++inline std::uint64_t now_ns() noexcept {
++    return static_cast<std::uint64_t>(
++        std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++// Install before worker threads start; disable after they stop. Never hot-swap
++// while producers are active. The sink must be non-blocking and thread-safe.
++inline void set_sink(Sink sink) noexcept {
++    sink_slot().store(sink, std::memory_order_release);
++}
++inline void emit(EventType type, const char * label = nullptr,
++                 std::uint64_t value0 = 0, std::uint64_t value1 = 0,
++                 std::uint16_t flags = phase_instant,
++                 std::uint64_t request_id = 0,
++                 std::uint64_t duration_ns = 0) noexcept {
++    const Sink sink = sink_slot().load(std::memory_order_acquire);
++    if (!sink) return;
++    Event e;
++    e.monotonic_ns = now_ns();
++    e.duration_ns = duration_ns;
++    e.request_id = request_id;
++    e.value0 = value0;
++    e.value1 = value1;
++    e.type = type;
++    e.flags = flags;
++    e.label = label;
++    sink(e);
++}
++class ScopedEvent {
++public:
++    ScopedEvent(EventType type, const char * label, std::uint64_t value0 = 0,
++                std::uint64_t value1 = 0, std::uint64_t request_id = 0) noexcept
++        : type_(type), label_(label), value0_(value0), value1_(value1),
++          request_id_(request_id), start_ns_(now_ns()) {
++        emit(type_, label_, value0_, value1_, phase_begin, request_id_);
++    }
++    ScopedEvent(const ScopedEvent &) = delete;
++    ScopedEvent & operator=(const ScopedEvent &) = delete;
++    ~ScopedEvent() noexcept {
++        const auto end_ns = now_ns();
++        emit(type_, label_, value0_, value1_, phase_end, request_id_,
++             end_ns >= start_ns_ ? end_ns - start_ns_ : 0);
++    }
++private:
++    EventType type_;
++    const char * label_;
++    std::uint64_t value0_, value1_, request_id_, start_ns_;
++};
++} // namespace nepenthes
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 6316df4..0000000 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -2,3 +2,4 @@
+ #include "llama-prof.h"
++#include "nepenthes_trace.hpp"
+ 
+ #include "ggml.h"
+@@ -3093,3 +3093,4 @@ ggml_status llama_context::graph_compute(
+             ggml_cgraph * gf,
+                    bool   batched) {
++    nepenthes::ScopedEvent nepenthes_compute(nepenthes::EventType::kernel, "llama.graph_compute", (std::uint64_t) ggml_graph_n_nodes(gf), batched ? 1 : 0);
+     int n_threads        = batched ? cparams.n_threads_batch : cparams.n_threads;
+@@ -996,4 +1150,5 @@ void llama_context::synchronize() {
+     LC_PROF("ctx.synchronize");
++    nepenthes::ScopedEvent nepenthes_sync(nepenthes::EventType::sync, "llama.context_synchronize");
+     if (!sched) {
+         return;
+     }
+diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
+index 9d8fb77..0000000 100644
+--- a/src/llama-moe-cache.cpp
++++ b/src/llama-moe-cache.cpp
+@@ -2,3 +2,4 @@
+ #include "llama-moe-iq.h"
++#include "nepenthes_trace.hpp"
+ 
+ #include "llama-impl.h"
+@@ -538,5 +538,6 @@ struct moe_cache_slru {
+             const int32_t s = head;
+             const int32_t vk = key_of[s];
+             if (vk >= 0) {
++                nepenthes::emit(nepenthes::EventType::eviction, "moe.expert", (std::uint64_t) vk, (std::uint64_t) s, nepenthes::flag_host);
+                 slot_map[vk / n_expert][vk % n_expert] = -1;
+             }
+@@ -545,5 +545,7 @@ struct moe_cache_slru {
+             touch(s);
+             fills.push_back({ e, s, vk });
+         }
++        nepenthes::emit(nepenthes::EventType::cache_hit, "moe.expert", (std::uint64_t) n_hit, (std::uint64_t) uniq.size());
++        nepenthes::emit(nepenthes::EventType::cache_miss, "moe.expert", (std::uint64_t) fills.size(), (std::uint64_t) n_ids);
+         return true;
+     }
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index a2f68ed..0000000 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -4,4 +4,5 @@
+ #include "base64.hpp"
+ #include "../../src/llama-prof.h"
+ #include "../../src/llama-moe-cache.h"
++#include "../../src/nepenthes_trace.hpp"
+ #include "server-chat.h"
+@@ -2342,6 +2342,7 @@ private:
+         n_empty_consecutive = 0;
+ 
+         SLT_INF(slot, "processing task, is_child = %d\n", slot.task->is_child());
++        nepenthes::emit(nepenthes::EventType::routing, "server.task_slot", (std::uint64_t) slot.task->id, (std::uint64_t) slot.id, nepenthes::phase_instant, (std::uint64_t) slot.task->id);
+         spec_auto.reset_round();
+         return true;
+     }

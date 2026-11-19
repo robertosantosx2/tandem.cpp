@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build tandem.cpp: clone llama.cpp at the base commit, apply tandem.patch, build llama-server with CUDA.
+# Build tandem.cpp: clone pinned llama.cpp, apply Tandem and NEPENTHES probes, build llama-server with CUDA.
 # usage: bash build.sh [dir] [extra cmake args, e.g. -DCMAKE_CUDA_ARCHITECTURES=89]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -15,6 +15,14 @@ elif git apply --check --reverse "$HERE/tandem.patch" 2>/dev/null; then
 else
   echo "tandem.patch does not apply to $(git rev-parse --short HEAD) (local changes?)"; exit 1
 fi
+if git apply --check "$HERE/nepenthes/runtime.patch" 2>/dev/null; then
+  git apply "$HERE/nepenthes/runtime.patch"
+elif git apply --check --reverse "$HERE/nepenthes/runtime.patch" 2>/dev/null; then
+  echo "NEPENTHES runtime probes are already applied"
+else
+  echo "NEPENTHES runtime.patch does not apply after tandem.patch"; exit 1
+fi
+python3 "$HERE/nepenthes/apply_runtime_probes.py" "$PWD"
 cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release "$@"
 cmake --build build -j --target llama-server
 echo "built: $(pwd)/build/bin/llama-server"
