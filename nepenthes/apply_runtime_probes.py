@@ -37,14 +37,14 @@ def replace_all_indented(
 ) -> None:
     path = root / rel
     source = path.read_text(encoding="utf-8")
-    pattern = re.compile(r"(?m)^([ \\t]*)" + re.escape(statement) + r"$")
+    pattern = re.compile(r"(?m)^([ \t]*)" + re.escape(statement) + r"$")
     matches = list(pattern.finditer(source))
     if len(matches) != expected:
         raise RuntimeError(f"{label}: expected {expected} line anchors in {rel}, found {len(matches)}")
 
     def replacement(match: re.Match[str]) -> str:
         indent = match.group(1)
-        return "\\n".join(indent + line for line in replacement_lines)
+        return "\n".join(indent + line for line in replacement_lines)
 
     path.write_text(pattern.sub(replacement, source), encoding="utf-8")
 
