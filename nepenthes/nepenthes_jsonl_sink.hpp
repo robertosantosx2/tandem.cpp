@@ -56,6 +56,9 @@ public:
         if (writer_.joinable()) writer_.join();
         output_.flush();
         if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
+        write_summary();
+        output_.flush();
+        if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
     }
 
     std::uint64_t dropped() const noexcept {
@@ -156,6 +159,22 @@ private:
         return true;
     }
 
+    void write_summary() noexcept {
+        const auto wall_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        const auto id = next_id_.fetch_add(1, std::memory_order_relaxed);
+        output_ << "{\"schema_version\":\"1.0\",\"run_id\":\"" << run_id_json_
+                << "\",\"event_id\":\"tandem-" << id
+                << "\",\"source\":\"tandem.cpp\",\"timestamp_unix_ns\":" << wall_ns
+                << ",\"event_kind\":\"sink_summary\",\"events_drained\":"
+                << events_drained_.load(std::memory_order_relaxed)
+                << ",\"dropped_events\":" << dropped_.load(std::memory_order_relaxed)
+                << ",\"write_errors\":" << write_errors_.load(std::memory_order_relaxed)
+                << "}\n";
+        if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
+    }
+
     void drain() noexcept {
         Event event{};
         while (running_.load(std::memory_order_acquire) ||
@@ -178,10 +197,12 @@ private:
                     << ",\"value1\":" << event.value1
                     << ",\"duration_ns\":" << event.duration_ns
                     << ",\"flags\":" << event.flags << "}\n";
-            if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
+            if (!output_) {
+                write_errors_.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                events_drained_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
-        output_.flush();
-        if (!output_) write_errors_.fetch_add(1, std::memory_order_relaxed);
     }
 
     inline static std::atomic<JsonlSink *> active_{nullptr};
@@ -191,6 +212,7 @@ private:
     std::atomic<std::size_t> enqueue_{0};
     std::atomic<std::size_t> dequeue_{0};
     std::atomic<std::uint64_t> dropped_{0};
+    std::atomic<std::uint64_t> events_drained_{0};
     std::atomic<std::uint64_t> write_errors_{0};
     std::atomic<bool> running_{false};
     std::atomic<bool> closed_{false};
