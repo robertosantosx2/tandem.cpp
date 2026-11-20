@@ -34,10 +34,11 @@ jobs:
         run: /tmp/nepenthes-trace-test
       - name: Compile and run optional NVTX marker test (disabled path)
         run: |
-          env -u NEPENTHES_NVTX g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+          env -u NEPENTHES_NVTX g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -rdynamic \
             -Inepenthes nepenthes/test_nepenthes_nvtx.cpp \
             -o /tmp/nepenthes-nvtx-test
           env -u NEPENTHES_NVTX /tmp/nepenthes-nvtx-test
+          env NEPENTHES_NVTX=1 /tmp/nepenthes-nvtx-test
       - name: Compile and run JSONL sink test
         env:
           NEPENTHES_KEEP_TEST_TRACE: "1"
