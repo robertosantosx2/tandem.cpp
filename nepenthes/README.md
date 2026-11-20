@@ -97,3 +97,8 @@ and C07/C08 remain required before engine acceptance.
 The sink callback must remain non-blocking and thread-safe. Instrumentation
 must preserve engine semantics and must not add blocking file I/O to worker
 threads.
+
+
+## Batch NVTX markers (optional)
+
+Set `NEPENTHES_NVTX=1` alongside `NEPENTHES_TRACE_JSONL` and `NEPENTHES_RUN_ID` to emit two point markers for each validated decode batch: `nepenthes.batch.start token=N` and `nepenthes.batch.end token=N`. The producer resolves `nvtxMarkA` at runtime from an already loaded NVTX library or `libnvToolsExt.so.1`; no NVTX headers or link-time library are required, and the feature is disabled by default. If the NVTX library is unavailable, no NVTX markers or matching host `nvtx_marker` events are emitted. Host JSONL events bracket each marker call with `value0/value1` monotonic timestamps for paired clock calibration. Markers wrap `llama_process` plus its decode synchronization on the queue worker thread, and are omitted when batch membership validation fails (token zero). The importer still treats resulting GPU activity association as `windowed` and many-to-many, not causal per-request ownership. This is software instrumentation; C07 and C08 remain separate physical acceptance gates.
