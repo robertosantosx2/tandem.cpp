@@ -32,6 +32,12 @@ jobs:
             -o /tmp/nepenthes-trace-test
       - name: Run trace smoke test
         run: /tmp/nepenthes-trace-test
+      - name: Compile and run optional NVTX marker test (disabled path)
+        run: |
+          env -u NEPENTHES_NVTX g++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+            -Inepenthes nepenthes/test_nepenthes_nvtx.cpp \
+            -o /tmp/nepenthes-nvtx-test
+          env -u NEPENTHES_NVTX /tmp/nepenthes-nvtx-test
       - name: Compile and run JSONL sink test
         env:
           NEPENTHES_KEEP_TEST_TRACE: "1"
