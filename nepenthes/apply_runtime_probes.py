@@ -61,6 +61,14 @@ def main() -> int:
     if not (root / "src/nepenthes_trace.hpp").is_file():
         raise RuntimeError("runtime.patch must be applied first (src/nepenthes_trace.hpp missing)")
 
+    # The NVTX JSONL sink serializes this event type; keep the runtime header enum in sync.
+    replace_once(
+        root, "src/nepenthes_trace.hpp",
+        "    sync, cpu_work, stall, oom, fallback, error,\n",
+        "    sync, cpu_work, stall, oom, fallback, nvtx_marker, error,\n",
+        "NVTX marker event type",
+    )
+
     # The sink is copied into src/ so both core and CUDA translation units can include it.
     shutil.copyfile(here / "nepenthes_jsonl_sink.hpp", root / "src/nepenthes_jsonl_sink.hpp")
     shutil.copyfile(here / "nepenthes_nvtx.hpp", root / "src/nepenthes_nvtx.hpp")
