@@ -116,6 +116,7 @@ private:
             case EventType::stall: return "stall";
             case EventType::oom: return "oom";
             case EventType::fallback: return "fallback";
+            case EventType::nvtx_marker: return "nvtx_marker";
             case EventType::error: return "error";
         }
         return "error";
