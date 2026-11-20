@@ -61,8 +61,25 @@ def main() -> int:
     if not (root / "src/nepenthes_trace.hpp").is_file():
         raise RuntimeError("runtime.patch must be applied first (src/nepenthes_trace.hpp missing)")
 
+    # Keep the runtime enum compatible with the NVTX JSONL sink. The pinned Tandem patch
+    # may already carry this member, so make the transformation explicitly idempotent.
+    trace_header = root / "src/nepenthes_trace.hpp"
+    trace_source = trace_header.read_text(encoding="utf-8")
+    enum_start = trace_source.find("enum class EventType")
+    enum_end = trace_source.find("};", enum_start)
+    if enum_start < 0 or enum_end < 0:
+        raise RuntimeError("NVTX marker event type: EventType enum not found in runtime header")
+    if "nvtx_marker" not in trace_source[enum_start:enum_end]:
+        replace_once(
+            root, "src/nepenthes_trace.hpp",
+            "    sync, cpu_work, stall, oom, fallback, error,\\n",
+            "    sync, cpu_work, stall, oom, fallback, nvtx_marker, error,\\n",
+            "NVTX marker event type",
+        )
+
     # The sink is copied into src/ so both core and CUDA translation units can include it.
     shutil.copyfile(here / "nepenthes_jsonl_sink.hpp", root / "src/nepenthes_jsonl_sink.hpp")
+    shutil.copyfile(here / "nepenthes_nvtx.hpp", root / "src/nepenthes_nvtx.hpp")
 
     # Start the process sink lazily from the first graph compute. It remains opt-in.
     replace_once(
@@ -639,13 +656,14 @@ def main() -> int:
         '            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());',
         '        queue_tasks.yield_to_queue([&]() {\n'
         '            nepenthes::BatchScope batch_scope(nepenthes_batch_token);\n'
+        '            nepenthes::BatchNvtxScope batch_nvtx_scope(nepenthes_batch_token);\n'
         '            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());',
         "server batch scope",
     )
     replace_once(
         root, server,
         '#include "../../src/nepenthes_trace.hpp"\n',
-        '#include "../../src/nepenthes_trace.hpp"\n#include "../../src/nepenthes_jsonl_sink.hpp"\n',
+        '#include "../../src/nepenthes_trace.hpp"\n#include "../../src/nepenthes_jsonl_sink.hpp"\n#include "../../src/nepenthes_nvtx.hpp"\n',
         "server sink include",
     )
     replace_once(
