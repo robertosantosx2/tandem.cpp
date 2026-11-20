@@ -63,6 +63,7 @@ def main() -> int:
 
     # The sink is copied into src/ so both core and CUDA translation units can include it.
     shutil.copyfile(here / "nepenthes_jsonl_sink.hpp", root / "src/nepenthes_jsonl_sink.hpp")
+    shutil.copyfile(here / "nepenthes_nvtx.hpp", root / "src/nepenthes_nvtx.hpp")
 
     # Start the process sink lazily from the first graph compute. It remains opt-in.
     replace_once(
@@ -639,13 +640,14 @@ def main() -> int:
         '            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());',
         '        queue_tasks.yield_to_queue([&]() {\n'
         '            nepenthes::BatchScope batch_scope(nepenthes_batch_token);\n'
+        '            nepenthes::BatchNvtxScope batch_nvtx_scope(nepenthes_batch_token);\n'
         '            ret = llama_process(ctx_tgt, LLAMA_PROCESS_TYPE_DECODE, batch.view.get());',
         "server batch scope",
     )
     replace_once(
         root, server,
         '#include "../../src/nepenthes_trace.hpp"\n',
-        '#include "../../src/nepenthes_trace.hpp"\n#include "../../src/nepenthes_jsonl_sink.hpp"\n',
+        '#include "../../src/nepenthes_trace.hpp"\n#include "../../src/nepenthes_jsonl_sink.hpp"\n#include "../../src/nepenthes_nvtx.hpp"\n',
         "server sink include",
     )
     replace_once(
